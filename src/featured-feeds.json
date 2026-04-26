@@ -1,0 +1,26 @@
+{
+  "feeds": [
+    {
+      "category": "Chinese Tech & Design",
+      "categoryZh": "中文科技/设计",
+      "items": [
+        { "name": "少数派", "url": "https://sspai.com/feed" },
+        { "name": "爱范儿", "url": "https://www.ifanr.com/feed/" },
+        { "name": "优设", "url": "https://www.uisdc.com/feed" },
+        { "name": "钛媒体", "url": "https://www.tmtpost.com/feed" },
+        { "name": "煎蛋", "url": "https://jandan.net/rss" },
+        { "name": "机核网", "url": "https://www.gcores.com/rss" },
+        { "name": "数字尾巴", "url": "https://www.digitaling.com/rss" }
+      ]
+    },
+    {
+      "category": "International Tech",
+      "categoryZh": "国际科技",
+      "items": [
+        { "name": "OpenAI Blog", "url": "https://openai.com/news/rss.xml" },
+        { "name": "arXiv AI", "url": "https://rss.arxiv.org/rss/cs.AI" },
+        { "name": "The Verge", "url": "https://www.theverge.com/rss/index.xml" }
+      ]
+    }
+  ]
+}

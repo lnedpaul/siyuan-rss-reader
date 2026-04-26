@@ -1,4 +1,13 @@
 // RSS Reader Plugin Styles
+:root {
+    // ✅ Magic numbers extracted as CSS variables for easy maintenance
+    --rss-button-size: 24px;
+    --rss-icon-size: 16px;
+    --rss-item-padding: 8px 10px;
+    --rss-item-gap: 8px;
+    --rss-item-margin-bottom: 4px;
+}
+
 .rss-reader-container {
     display: flex;
     height: 100%;
@@ -10,289 +19,64 @@
         background-color: var(--b3-theme-surface);
         border-right: 1px solid var(--b3-border-color);
 
-        .rss-sidebar-header {
-            padding: 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--b3-border-color);
-
-            h3 {
-                margin: 0;
-                font-size: 14px;
-                font-weight: 500;
-                color: var(--b3-font-color);
-            }
-        }
-
         .rss-list {
             flex: 1;
             overflow-y: auto;
-            padding: 8px;
+            padding: 4px;
 
             .rss-item {
-                padding: 10px 12px;
-                border-radius: 6px;
+                padding: var(--rss-item-padding);
+                border-radius: 4px;
                 cursor: pointer;
-                transition: all 0.2s ease;
-                margin-bottom: 4px;
-                border-left: 3px solid transparent;
+                transition: background-color 0.15s;  // ✅ Only animate background, not border
+                margin-bottom: var(--rss-item-margin-bottom);
+                display: flex;
+                align-items: center;
+                gap: var(--rss-item-gap);
 
                 &:hover {
                     background-color: var(--b3-list-hover);
-
-                    .delete-rss {
-                        opacity: 1;
-                    }
                 }
 
                 &.active {
                     background-color: var(--b3-theme-surface-lighter);
-                    border-left-color: var(--b3-theme-primary);
-                }
-
-                .delete-rss {
-                    opacity: 0;
-                    padding: 4px;
-                    transition: opacity 0.2s;
-                    border-radius: 4px;
-
-                    &:hover {
-                        background-color: var(--b3-theme-error-light);
-                        color: var(--b3-theme-error);
+                    
+                    // ✅ Use the placeholder div as indicator
+                    > div:first-child {
+                        background-color: var(--b3-theme-primary);
+                    }
+                    
+                    // ✅ Selected text color
+                    .subscription-name div {
+                        color: var(--b3-theme-primary) !important;
+                        font-weight: 500;
                     }
                 }
+
+                .delete-rss,
+                .refresh-rss,
+                .mark-read-rss {
+                    width: var(--rss-button-size);
+                    height: var(--rss-button-size);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 1px solid transparent;
+                    background: transparent;
+                    cursor: pointer;
+                    color: var(--b3-font-color-quaternary);
+                    border-radius: 4px;
+                    transition: all 0.2s;
+                    padding: 0;
+                    
+                    svg {
+                        width: var(--rss-icon-size);
+                        height: var(--rss-icon-size);
+                    }
+                    
+                    // ✅ Hover effects handled by JavaScript event delegation
+                }
             }
-        }
-    }
-
-    .rss-main {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-
-        .rss-toolbar {
-            padding: 8px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--b3-border-color);
-            background: var(--b3-theme-background);
-
-            .toolbar-left {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
-
-            .toolbar-right {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-        }
-
-        .rss-content {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
-    }
-}
-
-// Article list styles
-.article-item {
-    display: flex;
-    gap: 12px;
-    
-    &:hover {
-        background-color: var(--b3-list-hover) !important;
-    }
-
-    &.is-read {
-        opacity: 0.65;
-
-        .article-title {
-            font-weight: 400 !important;
-        }
-    }
-
-    &.selected {
-        background-color: var(--b3-list-hover) !important;
-        border-left: 3px solid var(--b3-theme-primary);
-    }
-
-    .article-image {
-        width: 80px;
-        height: 60px;
-        flex-shrink: 0;
-        overflow: hidden;
-        border-radius: 4px;
-        background-color: var(--b3-theme-surface-lighter);
-
-        img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-    }
-
-    .article-title {
-        font-size: 14px;
-        font-weight: 500;
-        line-height: 1.4;
-        color: var(--b3-font-color);
-        margin-bottom: 6px;
-
-        // 未读标记
-        .unread-dot {
-            display: inline-block;
-            width: 6px;
-            height: 6px;
-            background-color: var(--b3-theme-primary);
-            border-radius: 50%;
-            margin-right: 6px;
-        }
-    }
-
-    .article-excerpt {
-        font-size: 12px;
-        color: var(--b3-font-color-tertiary);
-        line-height: 1.4;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    .article-meta {
-        font-size: 11px;
-        color: var(--b3-font-color-quaternary);
-    }
-}
-
-// Article content styles
-.article-header {
-    margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--b3-border-color);
-
-    h1 {
-        font-size: 22px;
-        font-weight: 600;
-        color: var(--b3-font-color);
-        line-height: 1.4;
-        margin-bottom: 12px;
-    }
-
-    .article-meta {
-        display: flex;
-        gap: 16px;
-        font-size: 13px;
-        color: var(--b3-font-color-quaternary);
-
-        a {
-            color: var(--b3-theme-primary);
-            text-decoration: none;
-
-            &:hover {
-                text-decoration: underline;
-            }
-        }
-    }
-}
-
-.article-body {
-    line-height: 1.8;
-    color: var(--b3-font-color);
-    font-size: 15px;
-
-    // 文章内容样式
-    h1, h2, h3, h4, h5, h6 {
-        margin-top: 24px;
-        margin-bottom: 12px;
-        font-weight: 600;
-        color: var(--b3-font-color);
-    }
-
-    h1 { font-size: 24px; }
-    h2 { font-size: 20px; }
-    h3 { font-size: 18px; }
-    h4 { font-size: 16px; }
-
-    p {
-        margin-bottom: 16px;
-    }
-
-    img {
-        max-width: 100%;
-        height: auto;
-        border-radius: 4px;
-        margin: 16px 0;
-    }
-
-    a {
-        color: var(--b3-theme-primary);
-        text-decoration: none;
-
-        &:hover {
-            text-decoration: underline;
-        }
-    }
-
-    code {
-        background-color: var(--b3-theme-surface-lighter);
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 0.9em;
-    }
-
-    pre {
-        background-color: var(--b3-theme-surface-lighter);
-        padding: 16px;
-        border-radius: 8px;
-        overflow-x: auto;
-        margin: 16px 0;
-
-        code {
-            background: none;
-            padding: 0;
-        }
-    }
-
-    blockquote {
-        border-left: 4px solid var(--b3-theme-primary);
-        padding-left: 16px;
-        margin: 16px 0;
-        color: var(--b3-font-color-tertiary);
-        font-style: italic;
-    }
-
-    ul, ol {
-        margin-bottom: 16px;
-        padding-left: 24px;
-    }
-
-    li {
-        margin-bottom: 8px;
-    }
-
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 16px 0;
-
-        th, td {
-            border: 1px solid var(--b3-border-color);
-            padding: 8px 12px;
-            text-align: left;
-        }
-
-        th {
-            background-color: var(--b3-theme-surface-lighter);
-            font-weight: 600;
         }
     }
 }
@@ -318,66 +102,14 @@
     }
 }
 
-// Empty state
-.empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--b3-font-color-quaternary);
-    text-align: center;
-    padding: 40px;
-
-    .empty-icon {
-        font-size: 48px;
-        margin-bottom: 16px;
-    }
-
-    .empty-text {
-        font-size: 14px;
-        margin-bottom: 8px;
-    }
-
-    .empty-hint {
-        font-size: 12px;
-        color: var(--b3-font-color-quaternary);
-    }
-}
-
-// Category filter tags
-.category-filter-btn {
-    transition: all 0.2s ease;
-
-    &:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-}
-
-// Search highlight mark
-mark {
-    background: var(--b3-theme-primary-light);
-    color: var(--b3-theme-primary);
-    padding: 0 2px;
-    border-radius: 2px;
-}
-
 // Dark mode support - comprehensive
 body.b3-theme-dark,
 .protyle-wysiwyg[data-theme="dark"],
 [data-theme="dark"] {
-    .article-item {
-        &:hover {
-            background-color: var(--b3-list-hover) !important;
-        }
+    // 深色模式下不修改文章列表样式
+    // 所有样式由TS内联控制，自动适配主题变量
 
-        &.selected {
-            background-color: var(--b3-list-hover) !important;
-        }
-    }
-
-    .article-body {
+    .rss-article-body {
         img {
             background-color: var(--b3-theme-surface-lighter);
             border: 1px solid var(--b3-border-color);
@@ -415,11 +147,11 @@ body.b3-theme-dark,
     }
 
     // 深色模式下增强对比度
-    .article-excerpt {
+    .rss-article-excerpt {
         color: var(--b3-font-color-tertiary);
     }
 
-    .article-meta {
+    .rss-article-meta {
         color: var(--b3-font-color-quaternary);
     }
 
@@ -440,7 +172,7 @@ body.b3-theme-dark,
     }
 
     // 分类标签深色模式
-    .category-filter-btn {
+    .rss-category-filter-btn {
         &.active {
             background-color: var(--b3-theme-primary) !important;
             color: white !important;
@@ -474,7 +206,7 @@ body.b3-theme-dark,
 
 // 系统级深色模式检测
 @media (prefers-color-scheme: dark) {
-    .article-body {
+    .rss-article-body {
         img {
             background-color: var(--b3-theme-surface-lighter);
             border: 1px solid var(--b3-border-color);
@@ -518,72 +250,3 @@ body.b3-theme-dark,
     }
 }
 
-// OPML 导入导出按钮样式
-.opml-actions {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 16px;
-
-    .b3-button {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-    }
-}
-
-// 设置面板样式
-.settings-panel {
-    .b3-label {
-        margin-bottom: 16px;
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: var(--b3-font-color);
-        }
-
-        .b3-slider {
-            width: 100%;
-        }
-
-        .setting-hint {
-            font-size: 12px;
-            color: var(--b3-font-color-quaternary);
-            margin-top: 4px;
-        }
-    }
-}
-
-// 帮助面板快捷键样式
-.shortcut-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--b3-border-color);
-
-    &:last-child {
-        border-bottom: none;
-    }
-
-    kbd {
-        display: inline-block;
-        min-width: 24px;
-        padding: 4px 8px;
-        font-family: monospace;
-        font-size: 12px;
-        text-align: center;
-        background-color: var(--b3-theme-surface-lighter);
-        border: 1px solid var(--b3-border-color);
-        border-radius: 4px;
-        box-shadow: 0 1px 0 var(--b3-border-color);
-    }
-
-    .shortcut-desc {
-        flex: 1;
-        color: var(--b3-font-color);
-    }
-}

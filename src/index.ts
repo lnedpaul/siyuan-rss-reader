@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿import {
+﻿import {
     Plugin,
     showMessage,
     Dialog,
@@ -6,6 +6,28 @@
 } from "siyuan";
 
 import "./index.scss";
+import featuredFeedsData from './featured-feeds.json';
+
+interface FeedCategory {
+    category: string;
+    categoryZh: string;
+    items: Array<{ name: string; url: string }>;
+}
+
+interface FeaturedFeedsConfig {
+    feeds: FeedCategory[];
+}
+
+// Flatten featured feeds from JSON config with type safety
+const FEATURED_FEEDS = (featuredFeedsData as FeaturedFeedsConfig).feeds.flatMap(category => category.items);
+
+// Debug mode control - set to false in production
+const DEBUG = false;
+const logger = {
+    log: (...args: any[]) => DEBUG && console.log("[RSS]", ...args),
+    warn: (...args: any[]) => DEBUG && console.warn("[RSS]", ...args),
+    error: (...args: any[]) => console.error("[RSS]", ...args) // Always show errors
+};
 
 const TAB_TYPE = "rss_reader_tab";
 const STORAGE_NAME = "rss_subscriptions";
@@ -35,6 +57,7 @@ interface Article extends RSSItem {
     subscriptionId: string;
     isRead?: boolean;
     cachedAt?: number;
+    thumbnail?: string; // ✅ Cache extracted thumbnail URL to avoid regex on every render
 }
 
 interface ReadStatus {
@@ -48,16 +71,23 @@ interface CachedArticles {
     [subscriptionId: string]: Article[];
 }
 
+interface FontSizeConfig {
+    content: string;
+    title: string;
+    meta: string;
+    listItem: string;
+    listDesc: string;
+    listDate: string;
+    sliderLabel: string;
+}
+
 interface Settings {
     articlesPerPage: number;
     autoMarkRead: boolean;
-    layout: {
-        sidebarWidth: number;
-        listHeightRatio: number;
-    };
+    layout: 'horizontal' | 'vertical';
     enableKeyboardShortcuts: boolean;
     showUnreadOnly: boolean;
-    fontSize: 'small' | 'medium' | 'large';
+    fontSize: number; // 12-20px
     autoRefreshInterval: number;
     lastUsedNotebookId?: string;
 }
@@ -65,13 +95,10 @@ interface Settings {
 const defaultSettings: Settings = {
     articlesPerPage: DEFAULT_ARTICLES_PER_PAGE,
     autoMarkRead: true,
-    layout: {
-        sidebarWidth: 20,
-        listHeightRatio: 40
-    },
+    layout: 'vertical',
     enableKeyboardShortcuts: true,
     showUnreadOnly: false,
-    fontSize: 'medium',
+    fontSize: 14,
     autoRefreshInterval: 0,
     lastUsedNotebookId: "",
 };
@@ -88,27 +115,10 @@ const SHORTCUTS = {
     HELP: '?'
 };
 
-// ✅Default feeds - all tested working in China (2026-04-20)
-const FEATURED_FEEDS = [
-    // 中文科技/设计
-    { name: "少数派", url: "https://sspai.com/feed" },
-    { name: "爱范儿", url: "https://www.ifanr.com/feed/" },
-    { name: "优设", url: "https://www.uisdc.com/feed" },
-    { name: "钛媒体", url: "https://www.tmtpost.com/feed" },
-    { name: "煎蛋", url: "https://jandan.net/rss" },
-    { name: "机核网", url: "https://www.gcores.com/rss" },
-    { name: "数字尾巴", url: "https://www.digitaling.com/rss" },
-    // 国际科技
-    { name: "OpenAI Blog", url: "https://openai.com/news/rss.xml" },
-    { name: "arXiv AI", url: "https://rss.arxiv.org/rss/cs.AI" },
-    { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
-];
-
 export default class RSSReaderPlugin extends Plugin {
     private subscriptions: Subscription[] = [];
     private settings: Settings = defaultSettings;
     private currentSubscriptionIndex: number = -1;
-    private currentPage: number = 0;
     private displayedArticleCount: number = 0; // For infinite scroll
     private currentArticles: Article[] = [];
     private readStatus: ReadStatus = {};
@@ -116,19 +126,27 @@ export default class RSSReaderPlugin extends Plugin {
     private searchQuery: string = "";
     private isSearchMode: boolean = false;
     private container: HTMLElement | null = null;
-    private dockInstance: any = null; // Store dock instance for toggle/minimize
     private updateInterval: NodeJS.Timeout | null = null;
     private boundHandleKeyboard!: (e: KeyboardEvent) => void;
     private listScrollHandler!: () => void;
     private isLoadingMore: boolean = false;
+    private autoLoadRetryCount: number = 0; // Track auto-load retry count to prevent infinite loop
     // Resizer cleanup refs
     private resizerMoveHandler: ((e: MouseEvent) => void) | null = null;
     private resizerUpHandler: (() => void) | null = null;
     private vResizerMoveHandler: ((e: MouseEvent) => void) | null = null;
     private vResizerUpHandler: (() => void) | null = null;
+    private isResizing: boolean = false;
+    private initialWidth: number = 0;
+    // Track all pending timeouts for cleanup
+    private pendingTimeouts: NodeJS.Timeout[] = [];
+    // ✅ Debounce timer for saving read status to prevent excessive writes
+    private saveDebounceTimer: NodeJS.Timeout | null = null;
+    // ✅ Track if subscription events are bound to prevent duplicates
+    private subscriptionEventsBound: boolean = false;
 
     async onload() {
-        console.log("RSS Reader Plugin loaded v2.1");
+        logger.log("RSS Reader Plugin loaded v2.1");
 
         await this.loadSettings();
         
@@ -142,7 +160,7 @@ export default class RSSReaderPlugin extends Plugin {
         const before = this.subscriptions.length;
         this.subscriptions = this.subscriptions.filter(s => !s.url.includes("36kr.com"));
         if (this.subscriptions.length < before) {
-            console.log("[RSS] Migration: removed 36kr from subscriptions");
+            logger.log("Migration: removed 36kr from subscriptions");
             await this.saveData(STORAGE_NAME, this.subscriptions);
         }
 
@@ -151,9 +169,27 @@ export default class RSSReaderPlugin extends Plugin {
 
         this.boundHandleKeyboard = this.handleKeyboard.bind(this);
 
-        this.addIcons(`<symbol id="iconRSS" viewBox="0 0 32 32">
-<path d="M5.333 22.667c-1.473 0-2.667 1.194-2.667 2.667s1.194 2.667 2.667 2.667 2.667-1.194 2.667-2.667-1.194-2.667-2.667-2.667zM2.667 2.667v2.667c12.519 0 22.667 10.148 22.667 22.667h2.667c0-13.991-11.343-25.333-25.333-25.333zM2.667 12v2.667c7.363 0 13.333 5.97 13.333 13.333h2.667c0-8.837-7.163-16-16-16z"></path>
-</symbol>`);
+        // ✅ Register custom icons for the plugin
+        this.addIcons(`<svg>
+            <symbol id="iconAdd" viewBox="0 0 32 32">
+                <path d="M16 4v24M4 16h24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </symbol>
+            <symbol id="iconRefresh" viewBox="0 0 32 32">
+                <path d="M6 16a10 10 0 0 1 18.54-5.18l-2.54 2.54h6V7l-3.54 3.54A12 12 0 0 0 4 16a12 12 0 0 0 12 12 12 12 0 0 0 10.66-6.5l-1.78-.89A10 10 0 0 1 16 26 10 10 0 0 1 6 16z"/>
+            </symbol>
+            <symbol id="iconCheck" viewBox="0 0 32 32">
+                <path d="M13 24l-7-7 1.41-1.41L13 21.17l11.59-11.58L26 11z"/>
+            </symbol>
+            <symbol id="iconHelp" viewBox="0 0 32 32">
+                <path d="M16 2C8.268 2 2 8.268 2 16s6.268 14 14 14 14-6.268 14-14S23.732 2 16 2zm0 2c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-1 8v6h2v-6h-2zm0-4v2h2V8h-2z"/>
+            </symbol>
+            <symbol id="iconClose" viewBox="0 0 32 32">
+                <path d="M24 9.4L22.6 8 16 14.6 9.4 8 8 9.4 14.6 16 8 22.6 9.4 24 16 17.4 22.6 24 24 22.6 17.4 16z"/>
+            </symbol>
+            <symbol id="iconMin" viewBox="0 0 32 32">
+                <path d="M4 16h24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            </symbol>
+        </svg>`);
 
         this.addTopBar({
             icon: "iconRSS",
@@ -170,18 +206,17 @@ export default class RSSReaderPlugin extends Plugin {
             config: {
                 position: "RightBottom",
                 size: { width: 400, height: 300 },
-                icon: "iconRSS",
-                title: this.i18n.rssReader
+                icon: "iconSave",
+                title: this.i18n.rssReader,
             },
             data: {},
             init: function (this: any, dock: any) {
                 try {
                     plugin.container = this.element;
-                    plugin.dockInstance = dock;
                     plugin.initSidebarUI(this.element);
                     // Toolbar is now built into the title bar (initSidebarUI), no need for separate dock header injection
                 } catch (err) {
-                    console.error("[RSS] Dock init error:", err);
+                    logger.error("[RSS] Dock init error:", err);
                 }
             }
         });
@@ -190,14 +225,49 @@ export default class RSSReaderPlugin extends Plugin {
         this.registerKeyboardShortcuts();
     }
 
+    // Safe setTimeout that tracks all pending timeouts for cleanup
+    private safeSetTimeout(fn: () => void, delay: number): NodeJS.Timeout {
+        const timeout = setTimeout(() => {
+            fn();
+            // Remove from tracking array after execution
+            this.pendingTimeouts = this.pendingTimeouts.filter(t => t !== timeout);
+        }, delay);
+        this.pendingTimeouts.push(timeout);
+        return timeout;
+    }
+
+    // Clear all pending timeouts
+    private clearAllTimeouts() {
+        this.pendingTimeouts.forEach(t => clearTimeout(t));
+        this.pendingTimeouts = [];
+    }
+
     ondestroy() {
-        if (this.updateInterval) clearInterval(this.updateInterval);
+        // Clear all intervals
+        if (this.updateInterval) {
+            clearInterval(this.updateInterval);
+            this.updateInterval = null;
+        }
+        
+        // Clear all pending timeouts
+        this.clearAllTimeouts();
+        
+        // ✅ Clear debounce timer
+        if (this.saveDebounceTimer) {
+            clearTimeout(this.saveDebounceTimer);
+            this.saveDebounceTimer = null;
+        }
+        
+        // Remove keyboard event listener
         document.removeEventListener('keydown', this.boundHandleKeyboard);
+        
         // Cleanup global resizer event listeners
         if (this.resizerMoveHandler) document.removeEventListener('mousemove', this.resizerMoveHandler);
         if (this.resizerUpHandler) document.removeEventListener('mouseup', this.resizerUpHandler);
         if (this.vResizerMoveHandler) document.removeEventListener('mousemove', this.vResizerMoveHandler);
         if (this.vResizerUpHandler) document.removeEventListener('mouseup', this.vResizerUpHandler);
+        
+        // Cleanup scroll handler
         if (this.container) {
             const articleList = this.container.querySelector("#rssArticleList");
             if (articleList && this.listScrollHandler) {
@@ -208,7 +278,21 @@ export default class RSSReaderPlugin extends Plugin {
 
     private async loadSettings() {
         const saved = await this.loadData(SETTINGS_NAME);
-        this.settings = { ...defaultSettings, ...saved };
+        if (saved) {
+            this.settings = { ...defaultSettings, ...saved };
+            // Migrate old nested layout format to simple string
+            if (typeof this.settings.layout === 'object' && this.settings.layout !== null) {
+                const old = this.settings.layout as any;
+                this.settings.layout = old.currentMode === 'horizontal' ? 'horizontal' : 'vertical';
+            }
+            // Migrate old fontSize enum to numeric
+            if (typeof this.settings.fontSize === 'string') {
+                const map: Record<string, number> = { 'small': 12, 'medium': 14, 'large': 16 };
+                this.settings.fontSize = map[this.settings.fontSize] || 14;
+            }
+        } else {
+            this.settings = { ...defaultSettings };
+        }
     }
 
     // Fix #3: Detect SiYuan language and set locale
@@ -218,18 +302,27 @@ export default class RSSReaderPlugin extends Plugin {
             const lang = window.siyuan?.config?.lang || "en_US";
             // SiYuan's i18n is handled by the plugin system based on lang
             // We don't need to manually switch - it's automatic
-            console.log("[RSS] Detected language:", lang);
+            logger.log("Detected language:", lang);
         } catch (e) {
-            console.warn("[RSS] Failed to detect language:", e);
+            logger.warn("Failed to detect language:", e);
         }
     }
 
+    // ==================== Settings ====================
+
     private async saveSettings() {
-        await this.saveData(SETTINGS_NAME, this.settings);
+        try {
+            await this.saveData(SETTINGS_NAME, this.settings);
+        } catch (error) {
+            logger.error("Failed to save settings:", error);
+            showMessage(this.i18n.saveFailed || "保存设置失败", 3000);
+        }
     }
 
     private registerKeyboardShortcuts() {
         if (!this.settings.enableKeyboardShortcuts) return;
+        // Prevent duplicate event listeners
+        document.removeEventListener('keydown', this.boundHandleKeyboard);
         document.addEventListener('keydown', this.boundHandleKeyboard);
     }
 
@@ -258,13 +351,18 @@ export default class RSSReaderPlugin extends Plugin {
         }
     }
 
-    // Get font size CSS value based on settings
-    private getFontSizeStyle(): { content: string; title: string; meta: string } {
-        switch (this.settings.fontSize) {
-            case 'small': return { content: '13px', title: '15px', meta: '10px' };
-            case 'large': return { content: '16px', title: '18px', meta: '12px' };
-            default: return { content: '14px', title: '16px', meta: '11px' };
-        }
+    // Get font size CSS value based on numeric fontSize setting (12-20px)
+    private getFontSizeStyle(): FontSizeConfig {
+        const base = Math.max(12, Math.min(20, this.settings.fontSize || 14));
+        return {
+            content: `${base}px`,
+            title: `${base + 2}px`,
+            meta: `${base - 3}px`,
+            listItem: `${base - 1}px`,
+            listDesc: `${base - 3}px`,
+            listDate: `${base - 4}px`,
+            sliderLabel: `${base}px`
+        };
     }
 
     private navigateArticle(direction: number) {
@@ -318,48 +416,48 @@ export default class RSSReaderPlugin extends Plugin {
 
     // ==================== UI ====================
 
-    // SVG icon helpers
-    private svgIcon(path: string, size = 16): string {
-        return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
-    }
-
-    private initSidebarUI(container: HTMLElement) {
-        const sw = this.settings.layout.sidebarWidth;
-        const lh = this.settings.layout.listHeightRatio;
+private initSidebarUI(container: HTMLElement) {
+        // ✅ Reset event binding flag before rebuilding DOM
+        this.subscriptionEventsBound = false;
+        
+        const isH = this.settings.layout === 'horizontal';
+        const listFlex = isH ? '0 0 35%' : '0 0 40%';
+        const listBorder = isH ? 'border-right:1px solid var(--b3-border-color)' : 'border-bottom:1px solid var(--b3-border-color)';
+        const listMin = isH ? 'min-width:120px' : 'min-height:80px';
+        const resizerStyle = isH ? 'width:4px;cursor:col-resize' : 'height:4px;cursor:row-resize';
+        const contentDir = isH ? 'row' : 'column';
 
         container.innerHTML = `
-            <div style="width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;">
-                <!-- Title bar with toolbar buttons -->
+            <div class="rss-reader-container" style="width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;">
+                <!-- Title bar -->
                 <div id="rssTitleBar" style="flex-shrink:0;display:flex;align-items:center;padding:4px 8px;border-bottom:1px solid var(--b3-border-color);background:var(--b3-theme-surface);min-height:32px;">
                     <svg style="width:16px;height:16px;flex-shrink:0;margin-right:6px;"><use xlink:href="#iconRSS"></use></svg>
                     <span style="font-size:13px;font-weight:600;color:var(--b3-font-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">RSS Reader</span>
                     <div style="flex:1;"></div>
-                    <!-- Toolbar buttons (right side) -->
-                    <button id="tbAdd" title="${this.i18n.add}" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:15px;height:15px;"><use xlink:href="#iconAdd"></use></svg></button>
-                    <button id="tbRefresh" title="${this.i18n.refresh} (R)" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:15px;height:15px;"><use xlink:href="#iconRefresh"></use></svg></button>
-                    <button id="tbMarkRead" title="${this.i18n.markAllRead} (A)" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:15px;height:15px;"><use xlink:href="#iconCheck"></use></svg></button>
-                    <button id="tbSettings" title="${this.i18n.settings}" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:15px;height:15px;"><use xlink:href="#iconSettings"></use></svg></button>
-                    <button id="tbHelp" title="${this.i18n.help} (?)" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:15px;height:15px;"><use xlink:href="#iconHelp"></use></svg></button>
-                    <button id="tbMinimize" title="Minimize" style="width:26px;height:26px;border:none;background:transparent;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color2);"><svg style="width:14px;height:14px;"><use xlink:href="#iconMin"></use></svg></button>
+                    <!-- Settings, Help, Minimize buttons -->
+                    <button id="tbSettings" title="${this.i18n.settings}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconMore"></use></svg></button>
+                    <button id="tbHelp" title="${this.i18n.help}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconHelp"></use></svg></button>
+                    <span data-type="min" class="b3-tooltips b3-tooltips__sw" data-position="southwest" aria-label="Min" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconMin"></use></svg></span>
                 </div>
                 <!-- Content area below title bar -->
                 <div style="flex:1;display:flex;overflow:hidden;">
                     <!-- Left: subscription sidebar -->
-                    <div id="rssSidebar" style="width:${sw}%;min-width:130px;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
-                        <div id="rssList" style="flex:1;overflow-y:auto;padding:4px;">
+                    <div id="rssSidebar" class="rss-sidebar" style="width:20%;min-width:130px;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
+                        <!-- Subscription list (includes add button) -->
+                        <div id="rssList" class="rss-list" style="flex:1;overflow-y:auto;padding:4px;">
                             ${this.renderSubscriptionListHTML()}
                         </div>
                     </div>
                     <!-- Horizontal resizer -->
                     <div id="rssResizer" style="width:4px;background:var(--b3-border-color);cursor:col-resize;flex-shrink:0;"></div>
-                    <!-- Right: article list + content -->
-                    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;">
-                        <div id="rssArticleList" style="flex:0 0 ${lh}%;min-height:80px;border-bottom:1px solid var(--b3-border-color);overflow-y:auto;background:var(--b3-theme-background);">
+                    <!-- Right: article list + content (id=rssContentArea for layout switching) -->
+                    <div id="rssContentArea" style="flex:1;display:flex;flex-direction:${contentDir};overflow:hidden;min-width:0;">
+                        <div id="rssArticleList" style="flex:${listFlex};${listMin};${listBorder};overflow-y:auto;background:var(--b3-theme-background);">
                             <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">
                                 ${this.i18n.selectArticle}
                             </div>
                         </div>
-                        <div id="rssVerticalResizer" style="height:4px;background:var(--b3-border-color);cursor:row-resize;flex-shrink:0;"></div>
+                        <div id="rssVerticalResizer" style="${resizerStyle};background:var(--b3-border-color);flex-shrink:0;"></div>
                         <div id="rssArticleContent" style="flex:1;overflow-y:auto;background:var(--b3-theme-background);">
                             <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">
                                 ${this.i18n.selectArticle}
@@ -370,7 +468,6 @@ export default class RSSReaderPlugin extends Plugin {
             </div>`;
 
         this.setupEventListeners(container);
-        // ✅Fix #5: Setup infinite scroll
         this.setupInfiniteScroll(container);
     }
 
@@ -379,76 +476,164 @@ export default class RSSReaderPlugin extends Plugin {
         const bind = (id: string, fn: () => void) => {
             container.querySelector('#' + id)?.addEventListener('click', fn);
         };
-        bind('tbAdd', () => this.showAddSubscriptionDialog(container));
+        // Note: tbAdd is now inside #rssList and handled by event delegation in setupSubscriptionEvents
         bind('tbRefresh', () => this.refreshCurrentFeed(container));
         bind('tbMarkRead', () => this.markAllRead(container));
         bind('tbSettings', () => this.showSettingsDialog(container));
         bind('tbHelp', () => this.showHelpDialog());
-        bind('tbMinimize', () => this.toggleMinimize());
+        // Minimize uses data-type="min" - SiYuan handles automatically
 
-        // Hover effect for toolbar buttons
-        container.querySelectorAll('#rssTitleBar button').forEach(btn => {
-            btn.addEventListener('mouseenter', () => (btn as HTMLElement).style.background = 'var(--b3-theme-background)');
-            btn.addEventListener('mouseleave', () => (btn as HTMLElement).style.background = 'transparent');
-        });
+        // SiYuan built-in block__icon class handles hover styles automatically
 
         this.setupSubscriptionEvents(container);
         this.setupResizerEvents(container);
     }
 
     private renderSubscriptionListHTML(): string {
+        let html = '';
+        
         if (this.subscriptions.length === 0) {
-            return `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
-                <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg></div>
+            // ✅ When empty: show "+" button first, then empty state message
+            html += `<div style="padding:4px;display:flex;justify-content:center;">
+                <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
+                    <svg style="width:18px;height:18px;"><use xlink:href="#iconAdd"></use></svg>
+                </button>
+            </div>`;
+            html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
+                <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:28px;height:28px;"><use xlink:href="#iconRss"></use></svg></div>
                 <div>${this.i18n.noSubscriptions}</div>
                 <div style="margin-top:4px;font-size:11px;">${this.i18n.addFirst}</div>
             </div>`;
-        }
-        return this.subscriptions.map((sub, index) => `
-            <div class="rss-item ${this.currentSubscriptionIndex === index ? 'active' : ''}"
-                data-index="${index}"
-                style="padding:8px 10px;border-radius:4px;margin-bottom:2px;cursor:pointer;transition:all 0.15s;display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                <div style="flex:1;min-width:0;">
-                    <div style="font-size:13px;font-weight:${this.currentSubscriptionIndex === index ? '500' : '400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
-                        ${sub.name || sub.url}
+        } else {
+            // ✅ When populated: show subscription items first, then "+" button at bottom
+            html += this.subscriptions.map((sub, index) => `
+                <div class="rss-item ${this.currentSubscriptionIndex === index ? 'active' : ''}"
+                    data-index="${index}"
+                    style="padding:8px 10px;border-radius:4px;margin-bottom:4px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                    <!-- Left border indicator (fixed width placeholder) -->
+                    <div style="width:3px;flex-shrink:0;"></div>
+                    <!-- Subscription name (clickable) -->
+                    <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;">
+                        <div style="font-size:13px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
+                            ${sub.name || sub.url}
+                        </div>
                     </div>
+                    <!-- Action buttons: Mark Read, Refresh, Delete -->
+                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconCheck"></use></svg>
+                    </button>
+                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRefresh"></use></svg>
+                    </button>
+                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconClose"></use></svg>
+                    </button>
                 </div>
-                <button class="delete-rss" data-index="${index}" style="opacity:0;padding:2px 4px;border:none;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:3px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            `).join("");
+            
+            // Add button at bottom of subscription list
+            html += `<div style="padding:4px;display:flex;justify-content:center;">
+                <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
+                    <svg style="width:18px;height:18px;"><use xlink:href="#iconAdd"></use></svg>
                 </button>
-            </div>
-        `).join("");
+            </div>`;
+        }
+        
+        return html;
     }
 
     private setupSubscriptionEvents(container: HTMLElement) {
-        container.querySelectorAll(".rss-item").forEach(item => {
-            item.addEventListener("mouseenter", () => {
-                if (!item.classList.contains("active")) {
-                    (item as HTMLElement).style.backgroundColor = "var(--b3-list-hover)";
+        // ✅ Prevent duplicate event binding
+        if (this.subscriptionEventsBound) return;
+        this.subscriptionEventsBound = true;
+        
+        const rssList = container.querySelector("#rssList");
+        if (!rssList) return;
+
+        // ✅ Handle hover effects with mouseover/mouseout (bubbling events)
+        rssList.addEventListener("mouseover", (e) => {
+            const target = e.target as HTMLElement;
+            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
+            if (btn) {
+                const button = btn as HTMLElement;
+                if (button.classList.contains('delete-rss')) {
+                    // 删除按钮 - 红色警告
+                    button.style.background = 'var(--b3-theme-error-light)';
+                    button.style.borderColor = 'var(--b3-theme-error)';
+                    button.style.color = 'var(--b3-theme-error)';
+                } else if (button.classList.contains('refresh-rss')) {
+                    // 刷新按钮 - 绿色
+                    button.style.background = 'rgba(16, 185, 129, 0.15)';
+                    button.style.borderColor = 'rgb(16, 185, 129)';
+                    button.style.color = 'rgb(16, 185, 129)';
+                } else if (button.classList.contains('mark-read-rss')) {
+                    // 标记已读按钮 - 蓝色
+                    button.style.background = 'rgba(59, 130, 246, 0.15)';
+                    button.style.borderColor = 'rgb(59, 130, 246)';
+                    button.style.color = 'rgb(59, 130, 246)';
                 }
-                const del = item.querySelector(".delete-rss") as HTMLElement;
-                if (del) del.style.opacity = "1";
-            });
-            item.addEventListener("mouseleave", () => {
-                if (!item.classList.contains("active")) {
-                    (item as HTMLElement).style.backgroundColor = "transparent";
-                }
-                const del = item.querySelector(".delete-rss") as HTMLElement;
-                if (del) del.style.opacity = "0";
-            });
-            item.addEventListener("click", (e) => {
-                if ((e.target as HTMLElement).closest(".delete-rss")) return;
-                const index = parseInt((e.currentTarget as HTMLElement).dataset.index!);
-                this.selectSubscription(index, container);
-            });
+            }
         });
 
-        container.querySelectorAll(".delete-rss").forEach(btn => {
-            btn.addEventListener("click", (e) => {
+        rssList.addEventListener("mouseout", (e) => {
+            const target = e.target as HTMLElement;
+            const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement;
+            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
+            
+            // Only reset if we're actually leaving the button (not entering a child element)
+            if (btn && !btn.contains(relatedTarget)) {
+                const button = btn as HTMLElement;
+                button.style.background = 'transparent';
+                button.style.borderColor = 'transparent';
+                button.style.color = 'var(--b3-font-color-quaternary)';
+            }
+        });
+
+        // ✅ Handle click events
+        rssList.addEventListener("click", (e) => {
+            const target = e.target as HTMLElement;
+            
+            // Handle add button click
+            const addBtn = target.closest("#tbAdd");
+            if (addBtn) {
                 e.stopPropagation();
-                const index = parseInt((e.currentTarget as HTMLElement).dataset.index!);
+                this.showAddSubscriptionDialog(container);
+                return;
+            }
+            
+            // Handle delete button click
+            const deleteBtn = target.closest(".delete-rss");
+            if (deleteBtn) {
+                e.stopPropagation();
+                const index = parseInt((deleteBtn as HTMLElement).dataset.index!);
                 this.deleteSubscription(index, container);
-            });
+                return;
+            }
+            
+            // Handle refresh button click
+            const refreshBtn = target.closest(".refresh-rss");
+            if (refreshBtn) {
+                e.stopPropagation();
+                const index = parseInt((refreshBtn as HTMLElement).dataset.index!);
+                this.refreshSubscription(index, container);
+                return;
+            }
+            
+            // Handle mark read button click
+            const markReadBtn = target.closest(".mark-read-rss");
+            if (markReadBtn) {
+                e.stopPropagation();
+                const index = parseInt((markReadBtn as HTMLElement).dataset.index!);
+                this.markSubscriptionRead(index, container);
+                return;
+            }
+            
+            // Handle subscription item click (only if clicking on the name area)
+            const nameArea = target.closest(".subscription-name");
+            if (nameArea) {
+                const index = parseInt((nameArea as HTMLElement).dataset.index!);
+                this.selectSubscription(index, container);
+            }
         });
     }
 
@@ -457,7 +642,7 @@ export default class RSSReaderPlugin extends Plugin {
     // Add toolbar buttons to dock header (top-right, like Graph View)
     private addToolbarToDockHeader(container: HTMLElement) {
         // Wait for dock to be fully rendered
-        setTimeout(() => {
+        this.safeSetTimeout(() => {
             this.doAddToolbarToDockHeader(container);
         }, 100);
     }
@@ -466,16 +651,9 @@ export default class RSSReaderPlugin extends Plugin {
         // Find the dock panel by data-type
         const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
         if (!dockPanel) {
-            console.warn('[RSS] Dock panel not found for toolbar');
+            logger.warn('Dock panel not found for toolbar');
             return;
         }
-
-        // Debug: dump dock DOM structure
-        console.log('[RSS] Dock panel tagName:', dockPanel.tagName, 'className:', dockPanel.className, 'children:', dockPanel.children.length);
-        Array.from(dockPanel.children).forEach((child, i) => {
-            const el = child as HTMLElement;
-            console.log(`[RSS]   child[${i}]:`, el.tagName, el.className, 'display:', window.getComputedStyle(el).display, 'html:', el.outerHTML.substring(0, 200));
-        });
 
         // SiYuan dock structure: the header is typically the first flex row
         // Look for any element that contains a close button
@@ -485,13 +663,11 @@ export default class RSSReaderPlugin extends Plugin {
         const closeBtn = dockPanel.querySelector('[data-type="close"]') as HTMLElement;
         if (closeBtn && closeBtn.parentElement) {
             header = closeBtn.parentElement as HTMLElement;
-            console.log('[RSS] Found header via close button parent:', header.className);
         }
         
         // Strategy 2: Find by common dock header classes
         if (!header) {
             header = dockPanel.querySelector('.dock__header, .layout__tab--header, [class*="header"]') as HTMLElement | null;
-            if (header) console.log('[RSS] Found header via class:', header.className);
         }
         
         // Strategy 3: First non-column flex child
@@ -502,14 +678,13 @@ export default class RSSReaderPlugin extends Plugin {
                 const style = window.getComputedStyle(el);
                 if (style.display === 'flex' && !el.classList.contains('fn__flex-column')) {
                     header = el;
-                    console.log('[RSS] Found header via flex child:', el.className);
                     break;
                 }
             }
         }
 
         if (!header) {
-            console.warn('[RSS] Dock header not found - all strategies failed');
+            logger.warn('Dock header not found - all strategies failed');
             return;
         }
 
@@ -542,11 +717,11 @@ export default class RSSReaderPlugin extends Plugin {
 
         // SiYuan built-in SVG icons (same style as Graph View)
         toolbar.innerHTML = [
-            { id: 'dockAddRSS',       icon: 'iconAdd',      tip: this.i18n.add },
-            { id: 'dockRefreshBtn',   icon: 'iconRefresh',   tip: this.i18n.refresh + ' (R)' },
-            { id: 'dockMarkAllReadBtn', icon: 'iconCheck',   tip: this.i18n.markAllRead + ' (A)' },
-            { id: 'dockSettingsBtn',  icon: 'iconSettings', tip: this.i18n.settings },
-            { id: 'dockHelpBtn',      icon: 'iconHelp',     tip: this.i18n.help + ' (?)' },
+            { id: 'dockAddRSS',       icon: 'iconPlus',      tip: this.i18n.add },
+            { id: 'dockRefreshBtn',   icon: 'iconRefresh',   tip: this.i18n.refresh },
+            { id: 'dockMarkAllReadBtn', icon: 'iconCheck',   tip: this.i18n.markAllRead },
+            { id: 'dockSettingsBtn',  icon: 'iconSetting', tip: this.i18n.settings },
+            { id: 'dockHelpBtn',      icon: 'iconQuestionCircle',     tip: this.i18n.help },
         ].map(btn =>
             `<button class="b3-tooltips b3-tooltips__sw block__icon" ` +
                     `data-position="southwest" aria-label="${btn.tip}" id="${btn.id}">` +
@@ -562,8 +737,6 @@ export default class RSSReaderPlugin extends Plugin {
         } else {
             header.appendChild(toolbar);
         }
-
-        console.log('[RSS] Toolbar added to dock header:', header.className);
 
         // Bind events
         const bind = (id: string, fn: () => void) => {
@@ -586,6 +759,7 @@ export default class RSSReaderPlugin extends Plugin {
             hResizer.addEventListener("mousedown", (e) => {
                 e.preventDefault();
                 resizing = true;
+                this.isResizing = true;
                 startX = e.clientX;
                 startWidth = sidebar.offsetWidth;
                 hResizer.style.background = "var(--b3-theme-primary)";
@@ -603,10 +777,11 @@ export default class RSSReaderPlugin extends Plugin {
             const onUp = () => {
                 if (!resizing) return;
                 resizing = false;
+                // Delay resetting isResizing so ResizeObserver doesn't fire during drag release
+                this.safeSetTimeout(() => { this.isResizing = false; }, 300);
                 hResizer.style.background = "";
                 document.body.style.cursor = "";
                 document.body.style.userSelect = "";
-                this.settings.layout.sidebarWidth = parseFloat(sidebar.style.width) || this.settings.layout.sidebarWidth;
                 this.saveSettings();
             };
 
@@ -620,36 +795,47 @@ export default class RSSReaderPlugin extends Plugin {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
 
         if (vResizer && articleList) {
-            let startY = 0, startPct = 0, resizing = false;
+            let startY = 0, startX = 0, startPct = 0, resizing = false;
 
             vResizer.addEventListener("mousedown", (e) => {
                 e.preventDefault();
                 resizing = true;
-                startY = e.clientY;
+                this.isResizing = true;
                 const parent = articleList.parentElement!;
-                startPct = (articleList.offsetHeight / parent.offsetHeight) * 100;
+                if (this.settings.layout === 'horizontal') {
+                    startX = e.clientX;
+                    startPct = (articleList.offsetWidth / parent.offsetWidth) * 100;
+                } else {
+                    startY = e.clientY;
+                    startPct = (articleList.offsetHeight / parent.offsetHeight) * 100;
+                }
                 vResizer.style.background = "var(--b3-theme-primary)";
-                document.body.style.cursor = "row-resize";
+                const cursor = this.settings.layout === 'horizontal' ? 'col-resize' : 'row-resize';
+                document.body.style.cursor = cursor;
                 document.body.style.userSelect = "none";
             });
 
             const onMove = (e: MouseEvent) => {
                 if (!resizing) return;
                 const parent = articleList.parentElement!;
-                const delta = e.clientY - startY;
-                const newPct = startPct + (delta / parent.offsetHeight) * 100;
-                if (newPct >= 10 && newPct <= 80) articleList.style.flex = `0 0 ${newPct}%`;
+                if (this.settings.layout === 'horizontal') {
+                    const delta = e.clientX - startX;
+                    const newPct = startPct + (delta / parent.offsetWidth) * 100;
+                    if (newPct >= 10 && newPct <= 80) articleList.style.flex = `0 0 ${newPct}%`;
+                } else {
+                    const delta = e.clientY - startY;
+                    const newPct = startPct + (delta / parent.offsetHeight) * 100;
+                    if (newPct >= 10 && newPct <= 80) articleList.style.flex = `0 0 ${newPct}%`;
+                }
             };
 
             const onUp = () => {
                 if (!resizing) return;
                 resizing = false;
+                this.safeSetTimeout(() => { this.isResizing = false; }, 300);
                 vResizer.style.background = "";
                 document.body.style.cursor = "";
                 document.body.style.userSelect = "";
-                const parent = articleList.parentElement!;
-                const pct = (articleList.offsetHeight / parent.offsetHeight) * 100;
-                this.settings.layout.listHeightRatio = pct;
                 this.saveSettings();
             };
 
@@ -663,11 +849,24 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== Subscription Management ====================
 
     private async selectSubscription(index: number, container: HTMLElement) {
+        // ✅ Prevent reloading if already selected
+        if (this.currentSubscriptionIndex === index) {
+            logger.log("Subscription already selected, skipping reload");
+            return;
+        }
+        
         this.currentSubscriptionIndex = index;
-        this.currentPage = 0;
         this.displayedArticleCount = 0;
         this.currentArticles = [];
+        this.currentArticleIndex = -1; // ✅ 重置选中文章索引
         this.isSearchMode = false;
+        this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
+
+        // ✅ Clear article content window when switching subscriptions
+        const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
+        if (contentEl) {
+            contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle || 'Select an article to read'}</div>`;
+        }
 
         const sub = this.subscriptions[index];
         const articleListEl = container.querySelector("#rssArticleList") as HTMLElement;
@@ -676,8 +875,7 @@ export default class RSSReaderPlugin extends Plugin {
         container.querySelectorAll(".rss-item").forEach((item) => {
             const i = parseInt((item as HTMLElement).dataset.index!);
             item.classList.toggle("active", i === index);
-            (item as HTMLElement).style.backgroundColor = i === index ? "var(--b3-theme-surface-lighter)" : "transparent";
-            (item as HTMLElement).style.borderLeft = i === index ? "3px solid var(--b3-theme-primary)" : "none";
+            // ✅ Removed inline styles - let CSS handle active state
         });
 
         articleListEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">
@@ -695,9 +893,9 @@ export default class RSSReaderPlugin extends Plugin {
             }
             this.renderArticleList(container);
             // Fix #5: Auto-load more if list doesn't fill the container
-            setTimeout(() => this.checkAndLoadMore(container), 100);
+            this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
         } catch (error) {
-            console.error("Failed to fetch RSS:", error);
+            logger.error("Failed to fetch RSS:", error);
             const msg = error instanceof Error ? error.message : String(error);
             articleListEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-theme-error);font-size:13px;">
                 ❌${this.i18n.networkError}: ${msg}
@@ -715,16 +913,34 @@ export default class RSSReaderPlugin extends Plugin {
                     <div style="color:var(--b3-font-color);font-size:14px;">${sub.name || sub.url}</div>
                 </div>
                 <div class="b3-dialog__action">
-                    <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
+                    <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
                     <div class="fn__space"></div>
-                    <button class="b3-button b3-button--text" id="delConfirm" style="color:var(--b3-theme-error);">${this.i18n.delete}</button>
+                    <button type="button" class="b3-button b3-button--text" id="delConfirm" style="color:var(--b3-theme-error);">${this.i18n.delete}</button>
                 </div>`,
                 width: "350px",
             });
             // ✅Fix z-index to be above sticky header
             requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
-            dialog.element.querySelector(".b3-button--cancel")?.addEventListener("click", () => { dialog.destroy(); resolve(false); });
-            dialog.element.querySelector("#delConfirm")?.addEventListener("click", () => { dialog.destroy(); resolve(true); });
+            
+            const cancelBtn = dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement;
+            const confirmBtn = dialog.element.querySelector("#delConfirm") as HTMLButtonElement;
+            
+            // Use onclick instead of addEventListener to override any default handlers
+            if (cancelBtn) {
+                cancelBtn.onclick = () => {
+                    dialog.destroy();
+                    resolve(false);
+                };
+            }
+            
+            if (confirmBtn) {
+                confirmBtn.onclick = () => {
+                    // Destroy dialog synchronously first
+                    dialog.destroy();
+                    // Resolve immediately - don't delay
+                    resolve(true);
+                };
+            }
         });
 
         if (!confirmed) return;
@@ -732,12 +948,21 @@ export default class RSSReaderPlugin extends Plugin {
         this.subscriptions.splice(index, 1);
 
         if (sub.id) {
-            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-            delete cached[sub.id];
-            await this.saveData(CACHED_ARTICLES_NAME, cached);
+            try {
+                const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+                delete cached[sub.id];
+                await this.saveData(CACHED_ARTICLES_NAME, cached);
+            } catch (error) {
+                logger.error("Failed to delete cached articles:", error);
+            }
         }
 
-        await this.saveData(STORAGE_NAME, this.subscriptions);
+        try {
+            await this.saveData(STORAGE_NAME, this.subscriptions);
+        } catch (error) {
+            logger.error("Failed to save subscriptions after delete:", error);
+            showMessage(this.i18n.saveFailed || "保存失败", 3000);
+        }
 
         if (this.currentSubscriptionIndex === index) {
             this.currentSubscriptionIndex = -1;
@@ -777,9 +1002,9 @@ export default class RSSReaderPlugin extends Plugin {
                 </div>
             </div>
             <div class="b3-dialog__action">
-                <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
+                <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
                 <div class="fn__space"></div>
-                <button class="b3-button b3-button--text" id="confirmAdd">${this.i18n.confirm}</button>
+                <button type="button" class="b3-button b3-button--text" id="confirmAdd">${this.i18n.confirm}</button>
             </div>`,
             width: "400px",
         });
@@ -815,6 +1040,13 @@ export default class RSSReaderPlugin extends Plugin {
             const name = nameInput.value.trim();
             if (!url) { showMessage(this.i18n.feedUrl, 2000); return; }
 
+            // ✅ Check if subscription already exists (by URL)
+            const existingSub = this.subscriptions.find(sub => sub.url === url);
+            if (existingSub) {
+                showMessage(`${this.i18n.add} ${this.i18n.failed}: ${this.i18n.subscriptionExists}`, 3000);
+                return;
+            }
+
             this.subscriptions.push({
                 id: `sub_${Date.now()}`,
                 url,
@@ -848,27 +1080,47 @@ export default class RSSReaderPlugin extends Plugin {
 
         if (page.length === 0 && !append) {
             el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">
-                    <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg></div>
-                    <div>\${this.i18n.noSubscriptions}</div>
+                    <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:24px;height:24px;"><use xlink:href="#iconFile"></use></svg></div>
+                    <div>${this.i18n.noArticles || 'No articles'}</div>
                 </div>`;
             return;
         }
 
+        const fs = this.getFontSizeStyle();
         const html = page.map((article, i) => {
             const gi = start + i;
+            const isSelected = this.currentArticleIndex === gi;
+            const isUnread = !article.isRead;
+            
+            // 计算样式
+            // 选中优先：选中=浅灰色+加粗；未读=默认色+加粗+色条；已读=浅灰色+正常
+            const fontWeight = isSelected ? 'bold' : (isUnread ? 'bold' : 'normal');
+            const textColor = isSelected ? '#888888' : (isUnread ? 'var(--b3-font-color)' : '#888888');
+            // 未读且未选中：显示色条
+            const showUnreadBar = isUnread && !isSelected;
+            
+            // ✅ Use cached thumbnail URL (extracted once during loading)
+            const thumbnailUrl = article.thumbnail || '';
+            
             return `
-                <div class="article-item ${article.isRead ? 'is-read' : ''} ${this.currentArticleIndex === gi ? 'selected' : ''}"
+                <div class="article-item ${isUnread ? 'is-unread' : ''} ${isSelected ? 'selected' : ''}"
                     data-index="${gi}"
-                    style="padding:10px 14px;border-bottom:1px solid var(--b3-border-color);cursor:pointer;transition:background 0.15s;${article.isRead ? 'opacity:0.55;' : ''} ${this.currentArticleIndex === gi ? 'background-color:var(--b3-list-hover);' : ''}">
-                    <div style="font-size:13px;font-weight:${article.isRead ? '400' : '500'};margin-bottom:4px;color:var(--b3-font-color);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
-                        ${article.isRead ? '' : '<span style="color:var(--b3-theme-primary);margin-right:3px;font-size:10px;">鈼?/span>'}${this.highlightSearchTerm(article.title)}
-                    </div>
-                    <div style="font-size:11px;color:var(--b3-font-color-tertiary);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px;">
-                        ${this.highlightSearchTerm(this.stripHTML(article.description || article.content).substring(0, 80))}...
-                    </div>
-                    <div style="font-size:10px;color:var(--b3-font-color-quaternary);">
-                        ${article.pubDate ? this.formatDate(article.pubDate) : ''}
-                        ${this.isSearchMode ? ` 路 ${this.getSubscriptionName(article.subscriptionId)}` : ''}
+                    style="padding:12px 14px;border-bottom:1px solid var(--b3-border-color);cursor:pointer;display:flex;align-items:flex-start;gap:10px;">
+                    
+                    <!-- 未读色条占位 - 所有状态都保留3px空间保证对齐 -->
+                    <span style="width:3px;height:100%;min-height:20px;flex-shrink:0;${showUnreadBar ? 'background:var(--b3-theme-primary);' : 'background:transparent;'}border-radius:2px;align-self:stretch;margin-top:auto;margin-bottom:auto;"></span>
+                    
+                    <!-- 缩略图（如果有） -->
+                    ${thumbnailUrl ? `<img src="${thumbnailUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
+                    
+                    <!-- 标题和日期 -->
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:${fs.listItem};font-weight:${fontWeight};color:${textColor};line-height:1.4;margin-bottom:4px;">
+                            ${this.highlightSearchTerm(article.title)}
+                        </div>
+                        <div style="font-size:${fs.listDate};color:var(--b3-font-color-quaternary);">
+                            ${article.pubDate ? this.formatDate(article.pubDate) : ''}
+                        </div>
                     </div>
                 </div>`;
         }).join("");
@@ -885,17 +1137,23 @@ export default class RSSReaderPlugin extends Plugin {
 
         if (hasMore) {
             el.insertAdjacentHTML("beforeend", `<div class="loading-more" style="padding:12px;text-align:center;color:var(--b3-font-color-quaternary);font-size:12px;">
-                鈫?${this.i18n.loadMore} (${this.currentArticles.length - end})
+                ↓ ${this.i18n.loadMore} (${this.currentArticles.length - end})
             </div>`);
         }
 
         this.displayedArticleCount = end;
+        // ✅ Always setup events (cloning prevents duplicates)
         this.setupArticleListEvents(container);
     }
 
     // ✅Fix #5: Infinite scroll - properly append without removing existing items
     private setupInfiniteScroll(container: HTMLElement) {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
+
+        // ✅ Remove old handler if exists to prevent duplicate listeners
+        if (this.listScrollHandler && articleList) {
+            articleList.removeEventListener("scroll", this.listScrollHandler);
+        }
 
         this.listScrollHandler = () => {
             // Skip during search mode, when already loading, or no more articles
@@ -908,7 +1166,7 @@ export default class RSSReaderPlugin extends Plugin {
                     this.isLoadingMore = true;
                     this.renderArticleList(container, true);
                     // Unlock after a short delay to prevent rapid-fire
-                    setTimeout(() => { this.isLoadingMore = false; }, 500);
+                    this.safeSetTimeout(() => { this.isLoadingMore = false; }, 500);
                 }
             }
         };
@@ -922,7 +1180,7 @@ export default class RSSReaderPlugin extends Plugin {
             for (const mutation of mutations) {
                 if (mutation.type === "attributes" && mutation.attributeName === "data-theme") {
                     const theme = document.body.getAttribute("data-theme");
-                    console.log("[RSS] Theme changed to:", theme);
+                    logger.log("Theme changed to:", theme);
                     // CSS variables handle the actual theming, no JS needed
                 }
             }
@@ -935,70 +1193,58 @@ export default class RSSReaderPlugin extends Plugin {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
         if (!articleList || this.currentArticles.length === 0) return;
         
+        // ✅ Prevent infinite loop - max 3 retries
+        if (this.autoLoadRetryCount >= 3) {
+            this.autoLoadRetryCount = 0;
+            return;
+        }
+        
         // Use requestAnimationFrame for accurate DOM measurements
         requestAnimationFrame(() => {
             const { scrollHeight, clientHeight } = articleList;
             // If list doesn't fill the container and there are more articles, load more
             if (scrollHeight <= clientHeight + 10 && this.displayedArticleCount < this.currentArticles.length) {
-                console.log("[RSS] Auto-loading more articles (list not full)", { scrollHeight, clientHeight, displayed: this.displayedArticleCount, total: this.currentArticles.length });
                 this.isLoadingMore = true;
+                this.autoLoadRetryCount++;
                 this.renderArticleList(container, true);
-                // Check again after render
-                setTimeout(() => {
+                // ✅ Fix: Only check once after render, don't recursively call
+                this.safeSetTimeout(() => {
                     this.isLoadingMore = false;
-                    this.checkAndLoadMore(container);
+                    // Don't recursively call checkAndLoadMore - just reset counter
+                    if (this.displayedArticleCount >= this.currentArticles.length) {
+                        this.autoLoadRetryCount = 0;
+                    }
                 }, 150);
+            } else {
+                // Reset counter when condition is met or no more articles
+                this.autoLoadRetryCount = 0;
             }
         });
     }
 
-    // Toggle minimize/maximize by collapsing the dock panel height
-    private isMinimized: boolean = false;
-    private savedHeight: string = '';
-    
-    private toggleMinimize() {
-        if (!this.container) {
-            console.error("[RSS] container not available");
-            return;
-        }
-        
-        // DEBUG: Log the DOM structure to find the correct container
-        console.log("[RSS] === MINIMIZE DEBUG ===");
-        console.log("[RSS] this.container class:", this.container.className);
-        
-        // Walk up the DOM tree and log each level
-        let current: HTMLElement | null = this.container;
-        for (let i = 0; i < 10 && current; i++) {
-            current = current.parentElement;
-            if (!current) break;
-            
-            console.log(`[RSS] Level ${i}: tag=${current.tagName}, id=${current.id}, class=${current.className.substring(0, 100)}`);
-            
-            // Stop at body or html
-            if (current.tagName === 'BODY' || current.tagName === 'HTML') break;
-        }
-        
-        console.log("[RSS] === END DEBUG ===");
-        console.error("[RSS] Please share the debug output above so I can find the correct container");
-    }
-    }
-
+    // Minimize is handled by SiYuan's data-type="min" mechanism
+    // No custom toggleMinimize needed - span with data-type="min" triggers SiYuan's native minimize logic
 
     private setupArticleListEvents(container: HTMLElement) {
-        container.querySelectorAll(".article-item").forEach(item => {
-            item.addEventListener("mouseenter", () => {
-                if (!item.classList.contains("selected"))
-                    (item as HTMLElement).style.backgroundColor = "var(--b3-list-hover)";
-            });
-            item.addEventListener("mouseleave", () => {
-                if (!item.classList.contains("selected"))
-                    (item as HTMLElement).style.backgroundColor = "transparent";
-            });
-            item.addEventListener("click", () => {
-                const index = parseInt((item as HTMLElement).dataset.index!);
-                this.currentArticleIndex = index;
-                this.selectArticle(index, container);
-            });
+        let articleList = container.querySelector("#rssArticleList");
+        if (!articleList) return;
+
+        // ✅ Remove old event listeners by cloning and replacing the element
+        const newArticleList = articleList.cloneNode(true) as HTMLElement;
+        articleList.parentNode!.replaceChild(newArticleList, articleList);
+        articleList = newArticleList;  // Update reference to new element
+
+        // 点击事件
+        articleList.addEventListener("click", (e) => {
+            const item = (e.target as HTMLElement).closest(".article-item");
+            if (!item) return;
+            const index = parseInt((item as HTMLElement).dataset.index!);
+            
+            this.currentArticleIndex = index;
+            this.selectArticle(index, container);
+            
+            // 阻止事件冒泡，防止重复触发
+            e.stopPropagation();
         });
     }
 
@@ -1006,19 +1252,70 @@ export default class RSSReaderPlugin extends Plugin {
         const article = this.currentArticles[index];
         if (!article) return;
 
+        // ✅ Optimization: Update DOM classes instead of re-rendering entire list
+        // Remove 'selected' class from previously selected item
+        const prevSelected = container.querySelector('.article-item.selected') as HTMLElement;
+        if (prevSelected) {
+            prevSelected.classList.remove('selected');
+            // Update previous item's styles
+            const titleEl = prevSelected.querySelector('[style*="font-weight"]') as HTMLElement;
+            if (titleEl) {
+                const prevIndex = parseInt(prevSelected.dataset.index || '0');
+                const isUnread = !this.currentArticles[prevIndex]?.isRead;
+                titleEl.style.fontWeight = isUnread ? 'bold' : 'normal';
+                titleEl.style.color = isUnread ? 'var(--b3-font-color)' : '#888888';
+            }
+            // Show unread bar if needed
+            const unreadBar = prevSelected.querySelector('span:first-child') as HTMLElement;
+            if (unreadBar) {
+                const prevIndex = parseInt(prevSelected.dataset.index || '0');
+                const isUnread = !this.currentArticles[prevIndex]?.isRead;
+                unreadBar.style.background = isUnread ? 'var(--b3-theme-primary)' : 'transparent';
+            }
+        }
+
+        // Mark as read (if needed) - debounced save
         if (this.settings.autoMarkRead && !article.isRead) {
             article.isRead = true;
             this.readStatus[article.id] = { isRead: true, readAt: Date.now() };
-            await this.saveData(READ_STATUS_NAME, this.readStatus);
-            await this.cacheArticles(article.subscriptionId, this.currentArticles);
-            this.renderArticleList(container, false);
+            
+            // ✅ Debounce save operations to prevent excessive writes
+            if (this.saveDebounceTimer) {
+                clearTimeout(this.saveDebounceTimer);
+            }
+            this.saveDebounceTimer = this.safeSetTimeout(async () => {
+                try {
+                    await this.saveData(READ_STATUS_NAME, this.readStatus);
+                    await this.cacheArticles(article.subscriptionId, this.currentArticles);
+                } catch (error) {
+                    logger.error("Failed to save read status:", error);
+                }
+            }, 500); // Wait 500ms before saving
         }
 
+        // ✅ Add 'selected' class to new item and update styles
+        const newItem = container.querySelector(`.article-item[data-index="${index}"]`) as HTMLElement;
+        if (newItem) {
+            newItem.classList.add('selected');
+            // Update new item's styles
+            const titleEl = newItem.querySelector('[style*="font-weight"]') as HTMLElement;
+            if (titleEl) {
+                titleEl.style.fontWeight = 'bold';
+                titleEl.style.color = '#888888';
+            }
+            // Hide unread bar for selected item
+            const unreadBar = newItem.querySelector('span:first-child') as HTMLElement;
+            if (unreadBar) {
+                unreadBar.style.background = 'transparent';
+            }
+        }
+
+        // Set article content
         const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
         const fontSize = this.getFontSizeStyle();
         // ✅Fix #2: Sticky header for article with save button always visible
         contentEl.innerHTML = `
-            <div style="position:sticky;top:0;z-index:100;background:var(--b3-theme-background);padding:12px 20px 10px;border-bottom:1px solid var(--b3-border-color);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+            <div style="position:sticky;top:0;z-index:10;background:var(--b3-theme-background);padding:12px 20px 10px;border-bottom:1px solid var(--b3-border-color);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);">
                 <div style="flex:1;min-width:0;">
                     <h1 style="font-size:${fontSize.title};font-weight:600;color:var(--b3-font-color);line-height:1.4;margin:0 0 6px;word-break:break-word;">
                         ${article.title}
@@ -1026,13 +1323,11 @@ export default class RSSReaderPlugin extends Plugin {
                     <div style="font-size:${fontSize.meta};color:var(--b3-font-color-quaternary);display:flex;gap:10px;align-items:center;">
                         <span>${article.pubDate ? this.formatDate(article.pubDate) : ''}</span>
                         <a href="${article.link}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
-                            原文 ↗                        </a>
+                            ${this.i18n.originalLink} ↗                        </a>
                     </div>
                 </div>
-                <button class="save-to-siyuan-btn" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;border:none;background:var(--b3-theme-primary);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.15);" title="${this.i18n.saveToSiYuan}" aria-label="${this.i18n.saveToSiYuan}">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
+                <button class="save-to-siyuan-btn" data-article-id="${article.id}" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;border:none;background:var(--b3-theme-primary);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.15);" title="${this.i18n.saveToSiYuan}" aria-label="${this.i18n.saveToSiYuan}">
+                    <svg class="block__logoicon" style="width:18px;height:18px;"><use xlink:href="#iconSave"></use></svg>
                 </button>
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">
@@ -1041,28 +1336,33 @@ export default class RSSReaderPlugin extends Plugin {
                 </div>
             </div>`;
 
-        // Add hover effect and click handler to save button
+        // ✅ Fix: Use event delegation to avoid closure memory leak
+        // Store current article in a weak reference instead of capturing in closure
         const saveBtn = contentEl.querySelector(".save-to-siyuan-btn") as HTMLButtonElement;
         if (saveBtn) {
-            saveBtn.addEventListener("mouseenter", () => {
+            // Use onclick with ID lookup instead of capturing entire article object
+            saveBtn.onmouseenter = () => {
                 saveBtn.style.transform = "scale(1.1)";
                 saveBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.25)";
-            });
-            saveBtn.addEventListener("mouseleave", () => {
+            };
+            saveBtn.onmouseleave = () => {
                 saveBtn.style.transform = "scale(1)";
                 saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
-            });
-            saveBtn.addEventListener("click", () => {
-                this.saveArticleToSiYuan(article);
-            });
+            };
+            saveBtn.onclick = () => {
+                // ✅ Lookup article by ID instead of capturing it in closure
+                const articleId = saveBtn.getAttribute('data-article-id');
+                const currentArticle = this.currentArticles.find(a => a.id === articleId);
+                if (currentArticle) {
+                    this.saveArticleToSiYuan(currentArticle);
+                }
+            };
         }
     }
 
     // ==================== RSS Fetching (via forwardProxy) ====================
 
     private async fetchAndParseRSS(url: string): Promise<{ items: RSSItem[] }> {
-        console.log("[RSS] Fetching via proxy:", url);
-
         const response = await fetchSyncPost("/api/network/forwardProxy", {
             url: url,
             method: "GET",
@@ -1087,10 +1387,10 @@ export default class RSSReaderPlugin extends Plugin {
         const trimmed = xml.trimStart();
         if (trimmed.startsWith("<html") || trimmed.startsWith("<!DOCTYPE")) {
             console.error("[RSS] Got HTML page instead of RSS (likely anti-bot/captcha):", xml.substring(0, 300));
-            throw new Error("该源返回了网页而非RSS（可能触发了反爬验证），请尝试其他订阅源锛堝彲鑳借Е鍙戜簡鍙嶇埇楠岃瘉锛夛紝璇峰皾璇曞叾浠栬闃呮簮");
+            throw new Error(this.i18n.htmlNotRss);
         }
 
-        console.log("[RSS] Response preview:", xml.substring(0, 500));
+        logger.log("Response preview:", xml.substring(0, 500));
 
         // Parse RSS/Atom XML
         const parser = new DOMParser();
@@ -1099,7 +1399,7 @@ export default class RSSReaderPlugin extends Plugin {
         const parseError = doc.querySelector("parsererror");
         if (parseError) {
             console.error("[RSS] XML parse error:", parseError.textContent?.substring(0, 300));
-            throw new Error("RSS格式解析失败");
+            throw new Error(this.i18n.rssParseFailed);
         }
 
         // Extract HTML content from XML-parsed element
@@ -1151,7 +1451,7 @@ export default class RSSReaderPlugin extends Plugin {
                     }
                 });
 
-                console.log("[RSS] Parsed:", title?.substring(0, 30), "contentLen:", contentHTML.length);
+                logger.log("Parsed:", title?.substring(0, 30), "contentLen:", contentHTML.length);
 
                 if (title || link) {
                     items.push({ title: title || "Untitled", link, pubDate, content: contentHTML || descText, description: descText });
@@ -1223,13 +1523,26 @@ export default class RSSReaderPlugin extends Plugin {
         const feed = await this.fetchAndParseRSS(sub.url);
         const cached = await this.getCachedArticles(sub.id);
 
-        const newArticles = feed.items.map(item => ({
-            ...item,
-            id: this.generateArticleId(item.link),
-            subscriptionId: sub.id,
-            isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
-            cachedAt: Date.now()
-        } as Article));
+        const newArticles = feed.items.map(item => {
+            // ✅ Extract thumbnail once during loading, cache it in article object
+            let thumbnailUrl = '';
+            const contentToSearch = item.content || item.description || '';
+            if (contentToSearch) {
+                const imgMatch = contentToSearch.match(/<img[^>]+src=["']([^"']+)["']/i);
+                if (imgMatch) {
+                    thumbnailUrl = imgMatch[1];
+                }
+            }
+            
+            return {
+                ...item,
+                id: this.generateArticleId(item.link),
+                subscriptionId: sub.id,
+                isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
+                cachedAt: Date.now(),
+                thumbnail: thumbnailUrl || undefined // Only set if found
+            } as Article;
+        });
 
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
@@ -1264,9 +1577,15 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
     private async cacheArticles(subId: string, articles: Article[]) {
-        const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-        cached[subId] = articles;
-        await this.saveData(CACHED_ARTICLES_NAME, cached);
+        try {
+            // Keep only the latest MAX_CACHED_ARTICLES
+            const trimmed = articles.slice(0, MAX_CACHED_ARTICLES);
+            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+            cached[subId] = trimmed;
+            await this.saveData(CACHED_ARTICLES_NAME, cached);
+        } catch (error) {
+            logger.error("Failed to cache articles:", error);
+        }
     }
 
     // ==================== Search ====================
@@ -1293,11 +1612,11 @@ export default class RSSReaderPlugin extends Plugin {
         this.currentArticleIndex = -1;
 
         const countEl = container.querySelector("#articleCount") as HTMLElement;
-        if (countEl) countEl.textContent = `馃攳 ${results.length}`;
+        if (countEl) countEl.textContent = `🔍 ${results.length}`;
 
         if (results.length === 0) {
             (container.querySelector("#rssArticleList") as HTMLElement).innerHTML =
-                `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">馃攳 ${this.i18n.noResults}</div>`;
+                `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">🔍 ${this.i18n.noResults}</div>`;
             return;
         }
 
@@ -1305,9 +1624,16 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
     private highlightSearchTerm(text: string): string {
-        if (!this.searchQuery) return text;
+        if (!this.searchQuery) return this.escapeHtml(text);
+        const escapedText = this.escapeHtml(text);
         const regex = new RegExp(`(${this.escapeRegex(this.searchQuery)})`, 'gi');
-        return text.replace(regex, '<mark style="background:var(--b3-theme-primary-light);color:var(--b3-theme-primary);padding:0 2px;border-radius:2px;">$1</mark>');
+        return escapedText.replace(regex, '<mark style="background:var(--b3-theme-primary-light);color:var(--b3-theme-primary);padding:0 2px;border-radius:2px;">$1</mark>');
+    }
+
+    private escapeHtml(text: string): string {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     private escapeRegex(s: string): string {
@@ -1336,6 +1662,65 @@ export default class RSSReaderPlugin extends Plugin {
         showMessage(this.i18n.markAllReadSuccess, 2000);
     }
 
+    // ✅ 标记单个订阅源为已读
+    private async markSubscriptionRead(index: number, container: HTMLElement) {
+        if (index < 0 || index >= this.subscriptions.length) return;
+        
+        const sub = this.subscriptions[index];
+        
+        try {
+            // Get cached articles or fetch new ones
+            let articles = await this.getCachedArticles(sub.id);
+            if (!articles || articles.length === 0) {
+                articles = await this.fetchAndCacheArticles(sub);
+            }
+            
+            // Mark all articles as read
+            let markedCount = 0;
+            for (const a of articles) {
+                if (!a.isRead) {
+                    a.isRead = true;
+                    this.readStatus[a.id] = { isRead: true, readAt: Date.now() };
+                    markedCount++;
+                }
+            }
+            
+            await this.saveData(READ_STATUS_NAME, this.readStatus);
+            await this.cacheArticles(sub.id, articles);
+            
+            showMessage(`${this.i18n.markAllReadSuccess} (${markedCount})`, 2000);
+            
+            // If currently viewing this subscription, refresh article list
+            if (this.currentSubscriptionIndex === index && this.container) {
+                this.renderArticleList(this.container, false);
+            }
+        } catch (error) {
+            logger.error("Failed to mark subscription as read:", error);
+            showMessage(`${this.i18n.operationFailed}: ${error}`, 3000);
+        }
+    }
+
+    // ✅ 刷新单个订阅源
+    private async refreshSubscription(index: number, container: HTMLElement) {
+        if (index < 0 || index >= this.subscriptions.length) return;
+        
+        showMessage(this.i18n.refreshing, 1000);
+        
+        try {
+            const sub = this.subscriptions[index];
+            await this.fetchAndCacheArticles(sub);
+            
+            showMessage(this.i18n.refreshSuccess, 1500);
+            
+            // 如果当前选中的是这个订阅源，刷新显示
+            if (this.currentSubscriptionIndex === index && this.container) {
+                this.selectSubscription(index, this.container);
+            }
+        } catch (error) {
+            showMessage(`${this.i18n.refreshFailed}: ${error}`);
+        }
+    }
+
     private async refreshCurrentFeed(container: HTMLElement) {
         if (this.currentSubscriptionIndex < 0) return;
         showMessage(this.i18n.refreshing, 1500);
@@ -1343,7 +1728,7 @@ export default class RSSReaderPlugin extends Plugin {
         showMessage(this.i18n.refreshSuccess, 1500);
     }
 
-    // ✅ 全自动保存：无需弹窗，自动保存到上次使用的笔记本
+    // ✅ 保存文章到思源：让用户选择目标笔记本
     private async saveArticleToSiYuan(article: Article) {
         try {
             // 获取笔记本列表
@@ -1352,15 +1737,13 @@ export default class RSSReaderPlugin extends Plugin {
             const openNotebooks = allNotebooks.filter((nb: any) => !nb.closed);
 
             if (!openNotebooks.length) {
-                showMessage("没有打开的笔记本，无法保存", 3000);
+                showMessage(this.i18n.noOpenNotebook, 3000);
                 return;
             }
 
-            // 确定目标笔记本：优先用上次使用的，否则用第一个
-            let targetNbId = this.settings.lastUsedNotebookId;
-            if (!targetNbId || !openNotebooks.find((nb: any) => nb.id === targetNbId)) {
-                targetNbId = openNotebooks[0].id;
-            }
+            // 弹出笔记本选择对话框
+            const targetNbId = await this.showNotebookSelectionDialog(openNotebooks);
+            if (!targetNbId) return; // 用户取消选择
 
             let fileName = article.title
                 .replace(/[/\\:*?"<>|]/g, " ")
@@ -1371,15 +1754,15 @@ export default class RSSReaderPlugin extends Plugin {
 
             // ✅ 保留图片和排版：使用 htmlToMarkdown 转换（支持 img/strong/em/links 等）
             const articleHTML = article.content || article.description || "";
-            console.log("[RSS] Save article:", article.title, "contentLen:", article.content?.length, "descLen:", article.description?.length, "htmlLen:", articleHTML.length);
-            console.log("[RSS] Content preview (first 500):", articleHTML.substring(0, 500));
+            logger.log("Save article:", article.title, "contentLen:", article.content?.length, "descLen:", article.description?.length, "htmlLen:", articleHTML.length);
+            logger.log("Content preview (first 500):", articleHTML.substring(0, 500));
             const articleMarkdown = this.htmlToMarkdown(articleHTML);
-            console.log("[RSS] Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
+            logger.log("Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
 
             // 元信息行
             let metaLines: string[] = [];
             if (article.pubDate) {
-                metaLines.push(`> 发布于 ${new Date(article.pubDate).toLocaleString("zh-CN")}`);
+                metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
             }
             if (article.link) {
                 metaLines.push(`> [原文链接](${article.link})`);
@@ -1393,9 +1776,9 @@ export default class RSSReaderPlugin extends Plugin {
                 articleMarkdown
             ].join("\n");
 
-            showMessage(`正在保存到「${openNotebooks.find((n: any) => n.id === targetNbId)?.name || '笔记本'}」…`, 2000);
+            showMessage(`${this.i18n.savingTo}「${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}」…`, 2000);
 
-            console.log("[RSS] Full markdown length:", fullMd.length, "preview:", fullMd.substring(0, 300));
+            logger.log("Full markdown length:", fullMd.length, "preview:", fullMd.substring(0, 300));
 
             // Step 1: 创建文档（一次性写入全部内容）
             const res = await fetchSyncPost("/api/filetree/createDocWithMd", {
@@ -1403,7 +1786,7 @@ export default class RSSReaderPlugin extends Plugin {
                 path: `/${fileName}`,
                 markdown: fullMd
             });
-            console.log("[RSS] Create doc response:", JSON.stringify(res).substring(0, 500));
+            logger.log("Create doc response:", JSON.stringify(res).substring(0, 500));
 
             if (res.code === 201 || res.code === 202) {
                 // 文件已存在，用唯一名称重试
@@ -1414,11 +1797,11 @@ export default class RSSReaderPlugin extends Plugin {
                     markdown: fullMd.replace(`# ${fileName}`, `# ${uniqueName}`)
                 });
                 if (!res2.data) {
-                    showMessage(`${this.i18n.saveFailed}：文档已存在且重试失败`, 3000);
+                    showMessage(`${this.i18n.saveFailed}：${this.i18n.docExists}`, 3000);
                     return;
                 }
             } else if (!res.data) {
-                showMessage(`${this.i18n.saveFailed}：无法创建文档`, 3000);
+                showMessage(`${this.i18n.saveFailed}：${this.i18n.docCreateFailed}`, 3000);
                 return;
             }
 
@@ -1439,8 +1822,8 @@ export default class RSSReaderPlugin extends Plugin {
             this.settings.lastUsedNotebookId = targetNbId;
             await this.saveSettings();
 
-            console.log("[RSS] Save complete:", fileName);
-            showMessage(`✅ 已保存：${fileName}`, 4000);
+            logger.log("Save complete:", fileName);
+            showMessage(`✅ ${this.i18n.saved}：${fileName}`, 4000);
 
         } catch (error) {
             console.error("[RSS] Save error:", error);
@@ -1457,26 +1840,26 @@ export default class RSSReaderPlugin extends Plugin {
 
         // Sanitize first to remove dangerous elements
         const sanitized = this.sanitizeHTML(html);
-        console.log("[RSS] htmlToMarkdown: input len=", html.length, "sanitized len=", sanitized.length);
-        console.log("[RSS] htmlToMarkdown: sanitized preview=", sanitized.substring(0, 300));
+        logger.log("htmlToMarkdown: input len=", html.length, "sanitized len=", sanitized.length);
+        logger.log("htmlToMarkdown: sanitized preview=", sanitized.substring(0, 300));
 
         const temp = document.createElement("div");
         temp.innerHTML = sanitized;
-        console.log("[RSS] htmlToMarkdown: DOM childNodes=", temp.childNodes.length, "innerHTML len=", temp.innerHTML.length);
+        logger.log("htmlToMarkdown: DOM childNodes=", temp.childNodes.length, "innerHTML len=", temp.innerHTML.length);
 
         // Debug: log each child node
         Array.from(temp.childNodes).forEach((child, i) => {
-            console.log(`[RSS] Child ${i}: nodeType=${child.nodeType} nodeName=${child.nodeName}`,
+            logger.log(`Child ${i}: nodeType=${child.nodeType} nodeName=${child.nodeName}`,
                 child.nodeType === 1 ? `tag=${(child as Element).tagName} childCount=${child.childNodes.length}` : `text="${(child.textContent || "").substring(0, 50)}"`);
         });
 
         const md = this._nodeToMarkdown(temp);
-        console.log("[RSS] htmlToMarkdown: raw md len=", md.length, "preview=", md.substring(0, 300));
+        logger.log("htmlToMarkdown: raw md len=", md.length, "preview=", md.substring(0, 300));
 
         // Fallback: if DOM-based conversion returned empty but we had content,
         // use a simple regex-based approach
         if (!md.trim() && sanitized.trim()) {
-            console.log("[RSS] htmlToMarkdown: DOM conversion returned empty, falling back to regex");
+            logger.log("htmlToMarkdown: DOM conversion returned empty, falling back to regex");
             return this.simpleHtmlToMarkdown(sanitized);
         }
 
@@ -1487,7 +1870,7 @@ export default class RSSReaderPlugin extends Plugin {
     private _nodeToMarkdown(node: Node, depth: number = 0): string {
         // Guard against circular DOM references (max depth 50)
         if (depth > 50) {
-            console.log("[RSS] _nodeToMarkdown: MAX DEPTH reached");
+            logger.log("_nodeToMarkdown: MAX DEPTH reached");
             return "";
         }
 
@@ -1495,7 +1878,7 @@ export default class RSSReaderPlugin extends Plugin {
             return (node.textContent || "").replace(/&nbsp;/g, " ");
         }
         if (node.nodeType !== Node.ELEMENT_NODE) {
-            if (depth === 0) console.log("[RSS] _nodeToMarkdown: non-element at depth 0, type=", node.nodeType);
+            if (depth === 0) logger.log("_nodeToMarkdown: non-element at depth 0, type=", node.nodeType);
             return "";
         }
 
@@ -1503,7 +1886,7 @@ export default class RSSReaderPlugin extends Plugin {
         const tag = el.tagName.toLowerCase();
 
         // Debug: log tag at depth 0-1 only to avoid spam
-        if (depth <= 1) console.log(`[RSS] _nodeToMarkdown: depth=${depth} tag=${tag} children=${el.childNodes.length}`);
+        if (depth <= 1) logger.log(`_nodeToMarkdown: depth=${depth} tag=${tag} children=${el.childNodes.length}`);
 
         switch (tag) {
             case "br":
@@ -1580,10 +1963,14 @@ export default class RSSReaderPlugin extends Plugin {
                 if (!text.trim()) return "";
                 // Use triple backticks for code blocks
                 const escaped = text.replace(/```/g, "\\`\\`\\`");
-                return `\`\`\`\n${escaped}\n\`\`\`\n\n`;
+                return `\`\`\`
+${escaped}
+\`\`\`
+
+`;
             }
             case "table": {
-                // Skip table structure 鈥?extract plain text to avoid malformed table markdown
+                // Skip table structure - extract plain text to avoid malformed table markdown
                 const rows: string[] = [];
                 el.querySelectorAll("tr").forEach((tr) => {
                     const cells: string[] = [];
@@ -1666,6 +2053,55 @@ export default class RSSReaderPlugin extends Plugin {
 
     // ==================== Dialogs ====================
 
+    // 笔记本选择对话框
+    private async showNotebookSelectionDialog(notebooks: any[]): Promise<string | null> {
+        return new Promise((resolve) => {
+            const dialog = new Dialog({
+                title: `📁 ${this.i18n.selectNotebook || '选择笔记本'}`,
+                content: `<div class="b3-dialog__content" style="padding:16px;">
+                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || '请选择保存位置'}</div>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <select class="b3-select fn__block" id="notebookSelect" style="font-size:14px;flex:1;">
+                            ${notebooks.map((nb, index) => 
+                                `<option value="${nb.id}" ${index === 0 ? 'selected' : ''}>${nb.name}</option>`
+                            ).join('')}
+                        </select>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
+                            <input type="checkbox" class="b3-switch" id="rememberNotebook" checked>
+                            ${this.i18n.rememberChoice || '记住选择'}
+                        </label>
+                    </div>
+                </div>
+                <div class="b3-dialog__action">
+                    <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
+                    <div class="fn__space"></div>
+                    <button type="button" class="b3-button b3-button--text" id="confirmNotebook">${this.i18n.confirm}</button>
+                </div>`,
+                width: "400px",
+            });
+            requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
+
+            (dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement).onclick = () => {
+                dialog.destroy();
+                resolve(null);
+            };
+
+            dialog.element.querySelector("#confirmNotebook")?.addEventListener("click", () => {
+                const select = dialog.element.querySelector("#notebookSelect") as HTMLSelectElement;
+                const remember = (dialog.element.querySelector("#rememberNotebook") as HTMLInputElement).checked;
+                const notebookId = select.value;
+                
+                if (remember) {
+                    this.settings.lastUsedNotebookId = notebookId;
+                    this.saveSettings();
+                }
+                
+                dialog.destroy();
+                resolve(notebookId);
+            });
+        });
+    }
+
     private showHelpDialog() {
         const dialog = new Dialog({
             title: `📖 ${this.i18n.helpTitle}`,
@@ -1691,7 +2127,7 @@ export default class RSSReaderPlugin extends Plugin {
 
     private showSettingsDialog(container: HTMLElement) {
         const dialog = new Dialog({
-            title: `鈿欙笍 ${this.i18n.settings}`,
+            title: `⚙ ${this.i18n.settings}`,
             content: `<div class="b3-dialog__content settings-panel" style="padding:16px;font-size:13px;">
                 <div class="b3-label">
                     <label>${this.i18n.articlesPerPage}</label>
@@ -1701,13 +2137,17 @@ export default class RSSReaderPlugin extends Plugin {
                         <option value="30" ${this.settings.articlesPerPage === 30 ? 'selected' : ''}>30</option>
                         <option value="50" ${this.settings.articlesPerPage === 50 ? 'selected' : ''}>50</option>
                     </select>
+                    <div class="setting-hint" style="font-size:12px;color:var(--b3-font-color-quaternary);margin-top:4px;">${this.i18n.batchLoadHint}</div>
                 </div>
                 <div class="b3-label">
-                    <label>${this.i18n.fontSize}</label>
-                    <select class="b3-select fn__block" id="fontSize">
-                        <option value="small" ${this.settings.fontSize === 'small' ? 'selected' : ''}>${this.i18n.small}</option>
-                        <option value="medium" ${this.settings.fontSize === 'medium' ? 'selected' : ''}>${this.i18n.medium}</option>
-                        <option value="large" ${this.settings.fontSize === 'large' ? 'selected' : ''}>${this.i18n.large}</option>
+                    <label>${this.i18n.fontSize}: <span id="fontSizeValue">${this.settings.fontSize}px</span></label>
+                    <input type="range" class="b3-slider fn__block" id="fontSize" min="12" max="20" value="${this.settings.fontSize}" style="margin-top:6px;">
+                </div>
+                <div class="b3-label">
+                    <label>${this.i18n.layoutMode}</label>
+                    <select class="b3-select fn__block" id="layoutMode">
+                        <option value="vertical" ${this.settings.layout === 'vertical' ? 'selected' : ''}>${this.i18n.vertical}</option>
+                        <option value="horizontal" ${this.settings.layout === 'horizontal' ? 'selected' : ''}>${this.i18n.horizontal}</option>
                     </select>
                 </div>
                 <div class="b3-label">
@@ -1727,25 +2167,50 @@ export default class RSSReaderPlugin extends Plugin {
                 </div>
             </div>
             <div class="b3-dialog__action">
-                <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
+                <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
                 <div class="fn__space"></div>
-                <button class="b3-button b3-button--text" id="saveSettings">${this.i18n.save}</button>
+                <button type="button" class="b3-button b3-button--text" id="saveSettings">${this.i18n.save}</button>
             </div>`,
             width: "400px",
         });
         // ✅Fix z-index to be above sticky header
         requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
 
+        // Live preview: update font size label as slider moves
+        const fontSlider = dialog.element.querySelector("#fontSize") as HTMLInputElement;
+        const fontLabel = dialog.element.querySelector("#fontSizeValue") as HTMLSpanElement;
+        if (fontSlider && fontLabel) {
+            fontSlider.addEventListener("input", () => {
+                fontLabel.textContent = `${fontSlider.value}px`;
+            });
+        }
+
         (dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement).onclick = () => dialog.destroy();
 
         dialog.element.querySelector("#saveSettings")?.addEventListener("click", async () => {
             this.settings.articlesPerPage = parseInt((dialog.element.querySelector("#articlesPerPage") as HTMLSelectElement).value);
-            this.settings.fontSize = (dialog.element.querySelector("#fontSize") as HTMLSelectElement).value as 'small' | 'medium' | 'large';
+            this.settings.fontSize = parseInt((dialog.element.querySelector("#fontSize") as HTMLInputElement).value);
+            this.settings.layout = (dialog.element.querySelector("#layoutMode") as HTMLSelectElement).value as 'horizontal' | 'vertical';
             this.settings.autoMarkRead = (dialog.element.querySelector("#autoMarkRead") as HTMLInputElement).checked;
             this.settings.autoRefreshInterval = parseInt((dialog.element.querySelector("#autoRefreshInterval") as HTMLSelectElement).value);
 
             await this.saveData(SETTINGS_NAME, this.settings);
             this.setupAutoRefresh(container);
+            
+            // ✅ Re-render entire UI to apply layout and font changes
+            // initSidebarUI will rebuild all DOM and rebind events
+            
+            // Reset selection state to force reload after UI rebuild
+            const savedIndex = this.currentSubscriptionIndex;
+            this.currentSubscriptionIndex = -1;
+            
+            this.initSidebarUI(container);
+            
+            // If a subscription was selected, reload its articles
+            if (savedIndex >= 0 && savedIndex < this.subscriptions.length) {
+                await this.selectSubscription(savedIndex, container);
+            }
+            
             showMessage(this.i18n.settingsSaved, 2000);
             dialog.destroy();
         });
@@ -1820,13 +2285,16 @@ export default class RSSReaderPlugin extends Plugin {
         if (isNaN(date.getTime())) return dateStr;
         const diff = Date.now() - date.getTime();
         const mins = Math.floor(diff / 60000);
-        if (mins < 1) return '刚刚';
-        if (mins < 60) return `${mins}分钟前`;
+        if (mins < 1) return this.i18n.justNow;
+        if (mins < 60) return `${mins}${this.i18n.minutesAgo}`;
         const hours = Math.floor(mins / 60);
-        if (hours < 24) return `${hours}小时前`;
+        if (hours < 24) return `${hours}${this.i18n.hoursAgo}`;
         const days = Math.floor(hours / 24);
-        if (days === 1) return '昨天';
-        if (days < 7) return `${days}天前`;
-        return date.toLocaleDateString('zh-CN');
+        if (days === 1) return this.i18n.yesterday;
+        if (days < 7) return `${days}${this.i18n.daysAgo}`;
+        // @ts-ignore
+        const lang = window.siyuan?.config?.lang || 'en_US';
+        const locale = lang.replace('_', '-');
+        return date.toLocaleDateString(locale);
     }
 }
