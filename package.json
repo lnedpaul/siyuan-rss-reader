@@ -1,0 +1,26 @@
+{
+  "name": "siyuan-rss-reader",
+  "version": "0.1.0",
+  "description": "RSS reader plugin for SiYuan Note",
+  "main": "index.js",
+  "scripts": {
+    "dev": "webpack --mode development --watch",
+    "build": "webpack --mode production",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" --fix"
+  },
+  "devDependencies": {
+    "copy-webpack-plugin": "^11.0.0",
+    "css-loader": "^6.8.1",
+    "mini-css-extract-plugin": "^2.7.6",
+    "sass": "^1.63.6",
+    "sass-loader": "^13.3.2",
+    "siyuan": "^1.2.0",
+    "ts-loader": "^9.4.4",
+    "typescript": "^5.1.6",
+    "webpack": "^5.88.1",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "rss-parser": "^3.13.0"
+  }
+}

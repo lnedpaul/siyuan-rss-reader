@@ -1,0 +1,126 @@
+# SiYuan RSS Reader Plugin
+
+> 📡 Break the barrier between information acquisition and knowledge internalization.
+
+A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyuan), supporting one-click conversion of RSS articles into your permanent knowledge base.
+
+## ✨ Features
+
+### Core Features
+- **RSS/Atom Subscription Management**: Add, delete, rename feeds with drag-and-drop reordering
+- **Immersive Reading**: Read articles directly within SiYuan with full HTML rendering
+- **One-Click Save to SiYuan**: Automatically parse article content and generate SiYuan documents with original links
+- **Internationalization**: Supports Chinese (zh_CN) and English (en_US), auto-follows SiYuan language setting
+- **Dark Mode**: Auto-follows SiYuan theme (light/dark)
+
+### UI/UX
+- **Dock Integration**: Native dock panel with 8 position options (left/right/bottom sides)
+- **Resizable Layout**: Drag to adjust sidebar/article list/content panel sizes
+- **Infinite Scroll**: Auto-load more articles when scrolling to bottom
+- **Keyboard Shortcuts**: Full keyboard navigation support
+- **Customizable Settings**: Font size, articles per page, auto-refresh interval
+
+### Keyboard Shortcuts
+| Key | Action |
+|-----|--------|
+| `↑/↓` | Navigate articles |
+| `Enter` | Open selected article |
+| `O` | Open original link |
+| `S` | Save to SiYuan |
+| `R` | Refresh current feed |
+| `M` | Mark all as read |
+| `F` | Focus search |
+| `Escape` | Exit search |
+| `?` | Show help |
+
+## 🚀 Installation
+
+### From Release
+1. Download the latest release package
+2. Extract to `SiYuan/data/plugins/siyuan-rss-reader/`
+3. Restart SiYuan or reload plugins
+
+### From Source
+```bash
+# Clone the repository
+git clone https://github.com/HM/siyuan-rss-reader.git
+cd siyuan-rss-reader
+
+# Install dependencies
+pnpm install
+
+# Build
+pnpm run build
+
+# The dist/ folder contains the plugin files
+# Copy to SiYuan/data/plugins/siyuan-rss-reader/
+```
+
+## 🛠️ Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Development mode (watch for changes)
+pnpm run dev
+
+# Production build
+pnpm run build
+
+# Lint
+pnpm run lint
+```
+
+## 📁 Project Structure
+
+```
+siyuan-rss-reader/
+├── src/
+│   ├── index.ts          # Main plugin code
+│   ├── index.scss        # Styles
+│   └── i18n/             # Translations
+│       ├── zh_CN.json
+│       └── en_US.json
+├── dist/                 # Build output
+├── docs/                 # Documentation
+├── plugin.json           # Plugin manifest
+├── icon.png              # Plugin icon
+└── package.json
+```
+
+## 🔧 Configuration
+
+Access plugin settings via the ⚙️ button in the toolbar:
+
+- **Articles per page**: Number of articles to load per batch (default: 20)
+- **Font size**: Small / Medium / Large
+- **Auto-refresh interval**: Minutes between automatic feed updates
+- **Keyboard shortcuts**: Enable/disable keyboard navigation
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Make your changes
+4. Run lint: `pnpm run lint`
+5. Build: `pnpm run build`
+6. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the [MIT License](./LICENSE).
+
+## 🙏 Acknowledgments
+
+- [SiYuan Note](https://github.com/siyuan-note/siyuan) - A powerful personal knowledge management system
+- [rss-parser](https://github.com/rbren/rss-parser) - A lightweight RSS/Atom parser
+
+---
+
+**Plugin Author**: HM  
+**Version**: 0.1.0  
+**Minimum SiYuan Version**: 3.3.0

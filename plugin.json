@@ -1,0 +1,34 @@
+{
+  "name": "siyuan-rss-reader",
+  "author": "HM",
+  "url": "https://github.com/HM/siyuan-rss-reader",
+  "version": "0.1.0",
+  "minAppVersion": "3.3.0",
+  "backends": ["all"],
+  "frontends": ["all"],
+  "disabledInPublish": false,
+  "displayName": {
+    "default": "RSS Reader",
+    "zh_CN": "RSS 订阅"
+  },
+  "description": {
+    "default": "A RSS reader plugin for SiYuan Note, allowing you to save articles to notes with one click.",
+    "zh_CN": "思源笔记 RSS 订阅插件，支持一键将文章保存为笔记。"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README_zh_CN.md"
+  },
+  "keywords": [
+    "RSS",
+    "Reader",
+    "Subscription",
+    "Feed",
+    "SiYuan",
+    "Note",
+    "Save to Note",
+    "阅读器",
+    "订阅",
+    "保存笔记"
+  ]
+}
