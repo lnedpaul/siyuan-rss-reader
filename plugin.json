@@ -1,7 +1,7 @@
 {
   "name": "siyuan-rss-reader",
   "author": "HM",
-  "url": "https://github.com/HM/siyuan-rss-reader",
+  "url": "https://github.com/lnedpaul/siyuan-rss-reader",
   "version": "0.1.0",
   "minAppVersion": "3.3.0",
   "backends": ["all"],
