@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-04-24
+## [0.1.0] - 2026-04-25
 
 ### Added
 - **Dock Panel Integration**: Native dock panel with 8 position options (left/right/bottom sides)
@@ -16,18 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Internationalization (i18n)**: Chinese (zh_CN) and English (en_US) translations
 - **Dark Mode**: Auto-follows SiYuan theme (light/dark)
 - **Custom Title Bar**: Built-in title bar with toolbar buttons (Add, Refresh, Mark All Read, Settings, Help, Minimize)
+- **CI/CD Pipeline**: GitHub Actions workflow for automated build and lint checks
+- **Contributing Guide**: CONTRIBUTING.md with development guidelines and PR process
 
 ### Changed
 - Migrated from dialog-based UI to dock panel for better integration
 - Improved RSS parsing with better error handling
 - Enhanced HTML-to-Markdown conversion for saving articles
 - Optimized article rendering with dynamic font sizes
+- Updated repository URLs to https://github.com/lnedpaul/siyuan-rss-reader
+- Clarified dist/ directory is build output (not in git) in README files
+- Enhanced package.json with additional scripts (lint:check, type-check, clean)
 
 ### Fixed
 - Encoding issues with Chinese characters in source files
 - Infinite scroll not triggering when list is shorter than container
 - Help dialog now uses i18n translations instead of hardcoded Chinese
 - Removed duplicate `detectLanguage()` calls in plugin initialization
+- Removed build artifacts (zip files) from git tracking
+- Fixed plugin.json URL pointing to correct repository
+
+### Removed
+- Build artifacts (*.zip) from git repository (now managed via GitHub Releases)
 
 ## [0.0.1] - 2026-04-15
 
