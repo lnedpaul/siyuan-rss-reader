@@ -43,7 +43,7 @@
 ### 从源码构建
 ```bash
 # 克隆仓库
-git clone https://github.com/HM/siyuan-rss-reader.git
+git clone https://github.com/lnedpaul/siyuan-rss-reader.git
 cd siyuan-rss-reader
 
 # 安装依赖
@@ -76,18 +76,20 @@ pnpm run lint
 
 ```
 siyuan-rss-reader/
-├── src/
+├── src/                  # 源代码
 │   ├── index.ts          # 主插件代码
 │   ├── index.scss        # 样式文件
 │   └── i18n/             # 翻译文件
 │       ├── zh_CN.json
 │       └── en_US.json
-├── dist/                 # 构建输出
+├── dist/                 # 构建输出（自动生成，不在 git 中）
 ├── docs/                 # 文档
 ├── plugin.json           # 插件清单
 ├── icon.png              # 插件图标
 └── package.json
 ```
+
+**注意**：`dist/` 目录在构建时生成，不会提交到仓库。请从 [Releases 页面](https://github.com/lnedpaul/siyuan-rss-reader/releases) 下载预构建的版本。
 
 ## 🔧 配置
 

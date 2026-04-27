@@ -43,7 +43,7 @@ A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyu
 ### From Source
 ```bash
 # Clone the repository
-git clone https://github.com/HM/siyuan-rss-reader.git
+git clone https://github.com/lnedpaul/siyuan-rss-reader.git
 cd siyuan-rss-reader
 
 # Install dependencies
@@ -76,18 +76,20 @@ pnpm run lint
 
 ```
 siyuan-rss-reader/
-├── src/
+├── src/                  # Source code
 │   ├── index.ts          # Main plugin code
 │   ├── index.scss        # Styles
 │   └── i18n/             # Translations
 │       ├── zh_CN.json
 │       └── en_US.json
-├── dist/                 # Build output
+├── dist/                 # Build output (generated, not in git)
 ├── docs/                 # Documentation
 ├── plugin.json           # Plugin manifest
 ├── icon.png              # Plugin icon
 └── package.json
 ```
+
+**Note**: The `dist/` directory is generated during build and is not committed to the repository. Download pre-built releases from the [Releases page](https://github.com/lnedpaul/siyuan-rss-reader/releases).
 
 ## 🔧 Configuration
 
