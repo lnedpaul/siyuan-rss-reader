@@ -750,6 +750,12 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private setupResizerEvents(container: HTMLElement) {
+        // ✅ Fix #3: Clean up old event listeners before adding new ones
+        if (this.resizerMoveHandler) document.removeEventListener('mousemove', this.resizerMoveHandler);
+        if (this.resizerUpHandler) document.removeEventListener('mouseup', this.resizerUpHandler);
+        if (this.vResizerMoveHandler) document.removeEventListener('mousemove', this.vResizerMoveHandler);
+        if (this.vResizerUpHandler) document.removeEventListener('mouseup', this.vResizerUpHandler);
+        
         const hResizer = container.querySelector("#rssResizer") as HTMLElement;
         const sidebar = container.querySelector("#rssSidebar") as HTMLElement;
 
@@ -884,6 +890,26 @@ private initSidebarUI(container: HTMLElement) {
         </div>`;
 
         try {
+            // ✅ Fix #1: Use cache-first strategy to reduce latency
+            const cached = await this.getCachedArticles(sub.id);
+            
+            // If we have recent cache (< 5 minutes), show it immediately
+            const now = Date.now();
+            const hasRecentCache = cached.length > 0 && cached[0].cachedAt && (now - cached[0].cachedAt < 5 * 60 * 1000);
+            
+            if (hasRecentCache) {
+                // Show cached articles immediately for better UX
+                this.currentArticles = cached;
+                this.displayedArticleCount = 0;
+                if (countEl) {
+                    const unread = cached.filter(a => !a.isRead).length;
+                    countEl.textContent = unread > 0 ? `${unread}/${cached.length}` : `${cached.length}`;
+                }
+                this.renderArticleList(container);
+                this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
+            }
+            
+            // Fetch fresh data in background
             const articles = await this.fetchAndCacheArticles(sub);
             this.currentArticles = articles;
             this.displayedArticleCount = 0;
@@ -1335,6 +1361,9 @@ private initSidebarUI(container: HTMLElement) {
                     ${this.sanitizeHTMLForDisplay(article.content || article.description)}
                 </div>
             </div>`;
+
+        // ✅ Fix #2: Scroll to top when opening article
+        contentEl.scrollTop = 0;
 
         // ✅ Fix: Use event delegation to avoid closure memory leak
         // Store current article in a weak reference instead of capturing in closure
