@@ -250,3 +250,59 @@ body.b3-theme-dark,
     }
 }
 
+// Save to note button styles
+.save-to-siyuan-btn {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--b3-font-color-quaternary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    padding: 0;
+    
+    svg {
+        width: 24px;
+        height: 24px;
+        color: inherit;
+    }
+    
+    &:hover {
+        border-color: var(--b3-theme-primary);
+        color: var(--b3-theme-primary);
+    }
+}
+
+// Title bar action buttons (Settings, Help, Minimize)
+#tbSettings,
+#tbHelp,
+span[data-type="min"] {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--b3-font-color);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 0.2s;
+    
+    &:hover {
+        border-color: var(--b3-font-color);
+    }
+}
+
+// Title bar button icons
+.title-bar-btn-icon {
+    width: 24px !important;
+    height: 24px !important;
+    color: inherit;
+}
+

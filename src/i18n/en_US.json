@@ -27,7 +27,7 @@
     "articlesCount": "articles",
     "loading": "Loading...",
     "networkError": "Network Error",
-    "saveToSiYuan": "Save to SiYuan",
+    "saveNote": "Save Note",
     "saving": "Saving...",
     "saveSuccess": "Saved successfully",
     "saveFailed": "Save failed",
@@ -82,5 +82,6 @@
     "selectSaveLocation": "Please select save location",
     "rememberChoice": "Remember choice",
     "failed": "Failed",
-    "subscriptionExists": "Subscription already exists, cannot add duplicate"
+    "subscriptionExists": "Subscription already exists, cannot add duplicate",
+    "minimize": "Minimize"
 }

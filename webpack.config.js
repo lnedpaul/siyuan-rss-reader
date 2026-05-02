@@ -54,6 +54,8 @@ module.exports = (env, argv) => {
           { from: 'src/i18n', to: 'i18n', noErrorOnMissing: true },
           { from: 'icon.png', to: 'icon.png', noErrorOnMissing: true },
           { from: 'preview.png', to: 'preview.png', noErrorOnMissing: true },
+          { from: 'README.md', to: 'README.md', noErrorOnMissing: true },
+          { from: 'README_zh_CN.md', to: 'README_zh_CN.md', noErrorOnMissing: true },
         ],
       }),
     ],

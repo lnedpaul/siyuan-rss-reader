@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-25
+
+### Changed
+- Unified title bar button sizes and hover effects
+- Updated icons to Lucide Icons with consistent visual sizing
+- Refined button styles: transparent borders with hover color effects
+- Optimized save button, add button, and toolbar button interactions
+- Standardized CSS class usage for better maintainability
+- Removed tooltip artifacts from all title bar buttons
+
+### Fixed
+- Icon size inconsistency across settings, help, and minimize buttons
+- Hover border effects not displaying correctly on save button
+- Unified hover styles across all action buttons
+
+---
+
 ## [0.1.0] - 2026-04-25
 
 ### Added

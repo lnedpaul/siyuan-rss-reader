@@ -171,41 +171,79 @@ export default class RSSReaderPlugin extends Plugin {
         // SVG icon definitions (simplified paths from Feather Icons)
         const icons = `
         <svg>
-            <!-- Add Icon -->
+            <!-- Add Icon (toolbar-add.svg) -->
             <symbol id="iconRSSAdd" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="16"></line>
-                <line x1="8" y1="12" x2="16" y2="12"></line>
+                <path d="M16 5H3"></path>
+                <path d="M11 12H3"></path>
+                <path d="M16 19H3"></path>
+                <path d="M18 9v6"></path>
+                <path d="M21 12h-6"></path>
             </symbol>
             
-            <!-- Refresh Icon -->
+            <!-- Refresh Icon (toolbar-refresh.svg) -->
             <symbol id="iconRSSRefresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <polyline points="1 20 1 14 7 14"></polyline>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                <path d="m17 18-1.535 1.605a5 5 0 0 1-8-1.5"></path>
+                <path d="M17 22v-4h-4"></path>
+                <path d="M20.996 15.251A4.5 4.5 0 0 0 17.495 8h-1.79a7 7 0 1 0-12.709 5.607"></path>
+                <path d="M7 10v4h4"></path>
+                <path d="m7 14 1.535-1.605a5 5 0 0 1 8 1.5"></path>
             </symbol>
             
-            <!-- Check/Mark Read Icon -->
+            <!-- Mark Read Icon (toolbar-mark-read.svg) -->
             <symbol id="iconRSSCheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
+                <path d="M13 5h8"></path>
+                <path d="M13 12h8"></path>
+                <path d="M13 19h8"></path>
+                <path d="m3 17 2 2 4-4"></path>
+                <path d="m3 7 2 2 4-4"></path>
             </symbol>
             
-            <!-- Help Icon -->
+            <!-- Help Icon (toolbar-help.svg) -->
             <symbol id="iconRSSHelp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path>
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                <path d="M12 17h.01"></path>
             </symbol>
             
-            <!-- Settings Icon -->
+            <!-- Settings Icon (toolbar-settings.svg) -->
             <symbol id="iconRSSSettings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                <path d="M14 17H5"></path>
+                <path d="M19 7h-9"></path>
+                <circle cx="17" cy="17" r="3"></circle>
+                <circle cx="7" cy="7" r="3"></circle>
             </symbol>
             
-            <!-- Save/Bookmark Icon -->
+            <!-- Save Icon (save-article.svg) -->
             <symbol id="iconRSSSave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                <path d="M12 2v8"></path>
+                <path d="m16 6-4 4-4-4"></path>
+                <rect width="20" height="8" x="2" y="14" rx="2"></rect>
+                <path d="M6 18h.01"></path>
+                <path d="M10 18h.01"></path>
+            </symbol>
+            
+            <!-- Delete Icon (toolbar-delete.svg) -->
+            <symbol id="iconRSSDelete" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 5H3"></path>
+                <path d="M11 12H3"></path>
+                <path d="M16 19H3"></path>
+                <path d="m15.5 9.5 5 5"></path>
+                <path d="m20.5 9.5-5 5"></path>
+            </symbol>
+            
+            <!-- Main RSS Icon for Dock -->
+            <symbol id="iconRSSMain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 11a9 9 0 0 1 9 9"></path>
+                <path d="M4 4a16 16 0 0 1 16 16"></path>
+                <circle cx="5" cy="19" r="1"></circle>
+            </symbol>
+            
+            <!-- Minimize Icon (toolbar-minimize.svg) -->
+            <symbol id="iconRSSMinimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m14 10 7-7"></path>
+                <path d="M20 10h-6V4"></path>
+                <path d="m3 21 7-7"></path>
+                <path d="M4 14h6v6"></path>
             </symbol>
         </svg>`;
         
@@ -524,9 +562,9 @@ private initSidebarUI(container: HTMLElement) {
                     <span style="font-size:13px;font-weight:600;color:var(--b3-font-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">RSS Reader</span>
                     <div style="flex:1;"></div>
                     <!-- Settings, Help, Minimize buttons -->
-                    <button id="tbSettings" title="${this.i18n.settings}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconRSSSettings"></use></svg></button>
-                    <button id="tbHelp" title="${this.i18n.help}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconRSSHelp"></use></svg></button>
-                    <span data-type="min" class="b3-tooltips b3-tooltips__sw" data-position="southwest" aria-label="Min" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconMin"></use></svg></span>
+                    <button id="tbSettings" title="${this.i18n.settings}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSSettings"></use></svg></button>
+                    <button id="tbHelp" title="${this.i18n.help}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSHelp"></use></svg></button>
+                    <span data-type="min" title="${this.i18n.minimize}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSMinimize"></use></svg></span>
                 </div>
                 <!-- Content area below title bar -->
                 <div style="flex:1;display:flex;overflow:hidden;">
@@ -584,8 +622,8 @@ private initSidebarUI(container: HTMLElement) {
         if (this.subscriptions.length === 0) {
             // When empty: show "+" button first, then empty state message
             html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
-                    <svg style="width:18px;height:18px;"><use xlink:href="#iconRSSAdd"></use></svg>
+                <button id="tbAdd" title="${this.i18n.add}" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.borderColor='#26c6da';this.style.color='#26c6da';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                    <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
             html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
@@ -609,22 +647,22 @@ private initSidebarUI(container: HTMLElement) {
                         </div>
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
-                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRSSCheck"></use></svg>
+                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='#ffa726';this.style.color='#ffa726';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSCheck"></use></svg>
                     </button>
-                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRSSRefresh"></use></svg>
+                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='var(--b3-theme-success)';this.style.color='var(--b3-theme-success)';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSRefresh"></use></svg>
                     </button>
-                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconClose"></use></svg>
+                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='var(--b3-theme-error)';this.style.color='var(--b3-theme-error)';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSDelete"></use></svg>
                     </button>
                 </div>
             `).join("");
             
             // Add button at bottom of subscription list
             html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
-                    <svg style="width:18px;height:18px;"><use xlink:href="#iconRSSAdd"></use></svg>
+                <button id="tbAdd" title="${this.i18n.add}" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.borderColor='#26c6da';this.style.color='#26c6da';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                    <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
         }
@@ -813,8 +851,7 @@ private initSidebarUI(container: HTMLElement) {
             { id: 'dockSettingsBtn',  icon: 'iconSetting', tip: this.i18n.settings },
             { id: 'dockHelpBtn',      icon: 'iconQuestionCircle',     tip: this.i18n.help },
         ].map(btn =>
-            `<button class="b3-tooltips b3-tooltips__sw block__icon" ` +
-                    `data-position="southwest" aria-label="${btn.tip}" id="${btn.id}">` +
+            `<button class="block__icon" title="${btn.tip}" id="${btn.id}">` +
                 `<svg><use xlink:href="#${btn.icon}"></use></svg></button>`
         ).join('<span class="fn__space"></span>');
 
@@ -1500,8 +1537,8 @@ private initSidebarUI(container: HTMLElement) {
                             ${this.i18n.originalLink} �J                        </a>
                     </div>
                 </div>
-                <button class="save-to-siyuan-btn" data-article-id="${article.id}" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;border:none;background:var(--b3-theme-primary);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.15);" title="${this.i18n.saveToSiYuan}" aria-label="${this.i18n.saveToSiYuan}">
-                    <svg class="block__logoicon" style="width:18px;height:18px;"><use xlink:href="#iconRSSSave"></use></svg>
+                <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
+                    <svg class="block__logoicon" style="width:24px;height:24px;color:inherit;"><use xlink:href="#iconRSSSave"></use></svg>
                 </button>
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">

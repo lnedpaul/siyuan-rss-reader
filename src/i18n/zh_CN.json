@@ -27,7 +27,7 @@
     "articlesCount": "篇文章",
     "loading": "加载中...",
     "networkError": "网络错误",
-    "saveToSiYuan": "保存到思源",
+    "saveNote": "保存笔记",
     "saving": "正在保存...",
     "saveSuccess": "保存成功",
     "saveFailed": "保存失败",
@@ -82,5 +82,6 @@
     "selectSaveLocation": "请选择保存位置",
     "rememberChoice": "记住选择",
     "failed": "失败",
-    "subscriptionExists": "订阅源已存在，请勿重复添加"
+    "subscriptionExists": "订阅源已存在，请勿重复添加",
+    "minimize": "最小化"
 }
