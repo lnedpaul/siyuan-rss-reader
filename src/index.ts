@@ -524,8 +524,8 @@ private initSidebarUI(container: HTMLElement) {
                     <span style="font-size:13px;font-weight:600;color:var(--b3-font-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">RSS Reader</span>
                     <div style="flex:1;"></div>
                     <!-- Settings, Help, Minimize buttons -->
-                    <button id="tbSettings" title="${this.i18n.settings}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconMore"></use></svg></button>
-                    <button id="tbHelp" title="${this.i18n.help}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconHelp"></use></svg></button>
+                    <button id="tbSettings" title="${this.i18n.settings}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconRSSSettings"></use></svg></button>
+                    <button id="tbHelp" title="${this.i18n.help}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:transparent;border:none;cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconRSSHelp"></use></svg></button>
                     <span data-type="min" class="b3-tooltips b3-tooltips__sw" data-position="southwest" aria-label="Min" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);cursor:pointer;border-radius:3px;"><svg style="width:16px;height:16px;"><use xlink:href="#iconMin"></use></svg></span>
                 </div>
                 <!-- Content area below title bar -->
@@ -585,7 +585,7 @@ private initSidebarUI(container: HTMLElement) {
             // When empty: show "+" button first, then empty state message
             html += `<div style="padding:4px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
-                    <svg style="width:18px;height:18px;"><use xlink:href="#iconAdd"></use></svg>
+                    <svg style="width:18px;height:18px;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
             html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
@@ -610,10 +610,10 @@ private initSidebarUI(container: HTMLElement) {
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
                     <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconCheck"></use></svg>
+                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRSSCheck"></use></svg>
                     </button>
                     <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRefresh"></use></svg>
+                        <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRSSRefresh"></use></svg>
                     </button>
                     <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconClose"></use></svg>
@@ -624,7 +624,7 @@ private initSidebarUI(container: HTMLElement) {
             // Add button at bottom of subscription list
             html += `<div style="padding:4px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
-                    <svg style="width:18px;height:18px;"><use xlink:href="#iconAdd"></use></svg>
+                    <svg style="width:18px;height:18px;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
         }
@@ -1501,7 +1501,7 @@ private initSidebarUI(container: HTMLElement) {
                     </div>
                 </div>
                 <button class="save-to-siyuan-btn" data-article-id="${article.id}" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;border:none;background:var(--b3-theme-primary);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.15);" title="${this.i18n.saveToSiYuan}" aria-label="${this.i18n.saveToSiYuan}">
-                    <svg class="block__logoicon" style="width:18px;height:18px;"><use xlink:href="#iconSave"></use></svg>
+                    <svg class="block__logoicon" style="width:18px;height:18px;"><use xlink:href="#iconRSSSave"></use></svg>
                 </button>
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">
