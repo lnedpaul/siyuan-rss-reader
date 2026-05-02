@@ -57,7 +57,7 @@ interface Article extends RSSItem {
     subscriptionId: string;
     isRead?: boolean;
     cachedAt?: number;
-    thumbnail?: string; // ✅ Cache extracted thumbnail URL to avoid regex on every render
+    thumbnail?: string; // Cache extracted thumbnail URL to avoid regex on every render
 }
 
 interface ReadStatus {
@@ -140,13 +140,84 @@ export default class RSSReaderPlugin extends Plugin {
     private initialWidth: number = 0;
     // Track all pending timeouts for cleanup
     private pendingTimeouts: NodeJS.Timeout[] = [];
-    // ✅ Debounce timer for saving read status to prevent excessive writes
+    // Debounce timer for saving read status to prevent excessive writes
     private saveDebounceTimer: NodeJS.Timeout | null = null;
-    // ✅ Track if subscription events are bound to prevent duplicates
+    // Track if subscription events are bound to prevent duplicates
     private subscriptionEventsBound: boolean = false;
+    // Request lock map to prevent duplicate concurrent requests per subscription (stores raw feed data)
+    private pendingRequests: Map<string, Promise<{ items: RSSItem[] }>> = new Map();
+    // Performance metrics tracking
+    private perfMetrics: {
+        fetchCount: number;
+        totalFetchTime: number;
+        cacheHitCount: number;
+        renderCount: number;
+        totalRenderTime: number;
+    } = {
+        fetchCount: 0,
+        totalFetchTime: 0,
+        cacheHitCount: 0,
+        renderCount: 0,
+        totalRenderTime: 0
+    };
+
+    // ==================== Icon Registration ====================
+
+    /**
+     * Register custom SVG icons for the plugin
+     * Icons are embedded directly to avoid webpack loader issues
+     */
+    private registerCustomIcons() {
+        // SVG icon definitions (simplified paths from Feather Icons)
+        const icons = `
+        <svg>
+            <!-- Add Icon -->
+            <symbol id="iconRSSAdd" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </symbol>
+            
+            <!-- Refresh Icon -->
+            <symbol id="iconRSSRefresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </symbol>
+            
+            <!-- Check/Mark Read Icon -->
+            <symbol id="iconRSSCheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </symbol>
+            
+            <!-- Help Icon -->
+            <symbol id="iconRSSHelp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </symbol>
+            
+            <!-- Settings Icon -->
+            <symbol id="iconRSSSettings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </symbol>
+            
+            <!-- Save/Bookmark Icon -->
+            <symbol id="iconRSSSave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </symbol>
+        </svg>`;
+        
+        // Register all icons with SiYuan
+        this.addIcons(icons);
+        
+        logger.log('Custom icons registered successfully');
+    }
+
+    // ==================== Lifecycle ====================
 
     async onload() {
-        logger.log("RSS Reader Plugin loaded v2.1");
 
         await this.loadSettings();
         
@@ -169,27 +240,8 @@ export default class RSSReaderPlugin extends Plugin {
 
         this.boundHandleKeyboard = this.handleKeyboard.bind(this);
 
-        // ✅ Register custom icons for the plugin
-        this.addIcons(`<svg>
-            <symbol id="iconAdd" viewBox="0 0 32 32">
-                <path d="M16 4v24M4 16h24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </symbol>
-            <symbol id="iconRefresh" viewBox="0 0 32 32">
-                <path d="M6 16a10 10 0 0 1 18.54-5.18l-2.54 2.54h6V7l-3.54 3.54A12 12 0 0 0 4 16a12 12 0 0 0 12 12 12 12 0 0 0 10.66-6.5l-1.78-.89A10 10 0 0 1 16 26 10 10 0 0 1 6 16z"/>
-            </symbol>
-            <symbol id="iconCheck" viewBox="0 0 32 32">
-                <path d="M13 24l-7-7 1.41-1.41L13 21.17l11.59-11.58L26 11z"/>
-            </symbol>
-            <symbol id="iconHelp" viewBox="0 0 32 32">
-                <path d="M16 2C8.268 2 2 8.268 2 16s6.268 14 14 14 14-6.268 14-14S23.732 2 16 2zm0 2c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-1 8v6h2v-6h-2zm0-4v2h2V8h-2z"/>
-            </symbol>
-            <symbol id="iconClose" viewBox="0 0 32 32">
-                <path d="M24 9.4L22.6 8 16 14.6 9.4 8 8 9.4 14.6 16 8 22.6 9.4 24 16 17.4 22.6 24 24 22.6 17.4 16z"/>
-            </symbol>
-            <symbol id="iconMin" viewBox="0 0 32 32">
-                <path d="M4 16h24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-            </symbol>
-        </svg>`);
+        // Register custom icons for the plugin
+        this.registerCustomIcons();
 
         this.addTopBar({
             icon: "iconRSS",
@@ -252,10 +304,26 @@ export default class RSSReaderPlugin extends Plugin {
         // Clear all pending timeouts
         this.clearAllTimeouts();
         
-        // ✅ Clear debounce timer
+        // Clear debounce timer
         if (this.saveDebounceTimer) {
             clearTimeout(this.saveDebounceTimer);
             this.saveDebounceTimer = null;
+        }
+        
+        // Cancel all pending network requests
+        this.pendingRequests.clear();
+        
+        // Log performance metrics in debug mode
+        if (DEBUG) {
+            logger.log("[Perf Summary]", {
+                fetches: this.perfMetrics.fetchCount,
+                avgFetchTime: this.perfMetrics.fetchCount > 0 ? 
+                    `${(this.perfMetrics.totalFetchTime / this.perfMetrics.fetchCount).toFixed(0)}ms` : 'N/A',
+                cacheHits: this.perfMetrics.cacheHitCount,
+                renders: this.perfMetrics.renderCount,
+                avgRenderTime: this.perfMetrics.renderCount > 0 ? 
+                    `${(this.perfMetrics.totalRenderTime / this.perfMetrics.renderCount).toFixed(0)}ms` : 'N/A'
+            });
         }
         
         // Remove keyboard event listener
@@ -315,7 +383,7 @@ export default class RSSReaderPlugin extends Plugin {
             await this.saveData(SETTINGS_NAME, this.settings);
         } catch (error) {
             logger.error("Failed to save settings:", error);
-            showMessage(this.i18n.saveFailed || "保存设置失败", 3000);
+            showMessage(this.i18n.saveFailed || "��������ʧ��", 3000);
         }
     }
 
@@ -417,8 +485,29 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== UI ====================
 
 private initSidebarUI(container: HTMLElement) {
-        // ✅ Reset event binding flag before rebuilding DOM
+        // Reset event binding flag before rebuilding DOM
         this.subscriptionEventsBound = false;
+        
+        // CRITICAL: Clean up ALL resizer event listeners BEFORE destroying DOM
+        // This prevents stale listeners from accessing destroyed elements
+        if (this.resizerMoveHandler) {
+            document.removeEventListener('mousemove', this.resizerMoveHandler);
+            this.resizerMoveHandler = null;
+        }
+        if (this.resizerUpHandler) {
+            document.removeEventListener('mouseup', this.resizerUpHandler);
+            this.resizerUpHandler = null;
+        }
+        if (this.vResizerMoveHandler) {
+            document.removeEventListener('mousemove', this.vResizerMoveHandler);
+            this.vResizerMoveHandler = null;
+        }
+        if (this.vResizerUpHandler) {
+            document.removeEventListener('mouseup', this.vResizerUpHandler);
+            this.vResizerUpHandler = null;
+        }
+        // Reset resizing flag
+        this.isResizing = false;
         
         const isH = this.settings.layout === 'horizontal';
         const listFlex = isH ? '0 0 35%' : '0 0 40%';
@@ -442,7 +531,7 @@ private initSidebarUI(container: HTMLElement) {
                 <!-- Content area below title bar -->
                 <div style="flex:1;display:flex;overflow:hidden;">
                     <!-- Left: subscription sidebar -->
-                    <div id="rssSidebar" class="rss-sidebar" style="width:20%;min-width:130px;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
+                    <div id="rssSidebar" class="rss-sidebar" style="width:20%;min-width:min-content;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
                         <!-- Subscription list (includes add button) -->
                         <div id="rssList" class="rss-list" style="flex:1;overflow-y:auto;padding:4px;">
                             ${this.renderSubscriptionListHTML()}
@@ -493,7 +582,7 @@ private initSidebarUI(container: HTMLElement) {
         let html = '';
         
         if (this.subscriptions.length === 0) {
-            // ✅ When empty: show "+" button first, then empty state message
+            // When empty: show "+" button first, then empty state message
             html += `<div style="padding:4px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="b3-tooltips b3-tooltips__sw" data-position="southwest" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color);background:var(--b3-theme-surface-lighter);border:1px dashed var(--b3-border-color);cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.background='var(--b3-theme-primary-lighter)';this.style.borderColor='var(--b3-theme-primary)';this.style.color='var(--b3-theme-primary)';" onmouseleave="this.style.background='var(--b3-theme-surface-lighter)';this.style.borderColor='var(--b3-border-color)';this.style.color='var(--b3-font-color)';">
                     <svg style="width:18px;height:18px;"><use xlink:href="#iconAdd"></use></svg>
@@ -505,7 +594,8 @@ private initSidebarUI(container: HTMLElement) {
                 <div style="margin-top:4px;font-size:11px;">${this.i18n.addFirst}</div>
             </div>`;
         } else {
-            // ✅ When populated: show subscription items first, then "+" button at bottom
+            // When populated: show subscription items first, then "+" button at bottom
+            const fs = this.getFontSizeStyle();
             html += this.subscriptions.map((sub, index) => `
                 <div class="rss-item ${this.currentSubscriptionIndex === index ? 'active' : ''}"
                     data-index="${index}"
@@ -514,18 +604,18 @@ private initSidebarUI(container: HTMLElement) {
                     <div style="width:3px;flex-shrink:0;"></div>
                     <!-- Subscription name (clickable) -->
                     <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;">
-                        <div style="font-size:13px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
+                        <div style="font-size:${fs.listItem};font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
                             ${sub.name || sub.url}
                         </div>
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
-                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconCheck"></use></svg>
                     </button>
-                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconRefresh"></use></svg>
                     </button>
-                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;">
+                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;"><use xlink:href="#iconClose"></use></svg>
                     </button>
                 </div>
@@ -543,31 +633,31 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private setupSubscriptionEvents(container: HTMLElement) {
-        // ✅ Prevent duplicate event binding
+        // Prevent duplicate event binding
         if (this.subscriptionEventsBound) return;
         this.subscriptionEventsBound = true;
         
         const rssList = container.querySelector("#rssList");
         if (!rssList) return;
 
-        // ✅ Handle hover effects with mouseover/mouseout (bubbling events)
+        // Handle hover effects with mouseover/mouseout (bubbling events)
         rssList.addEventListener("mouseover", (e) => {
             const target = e.target as HTMLElement;
             const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
             if (btn) {
                 const button = btn as HTMLElement;
                 if (button.classList.contains('delete-rss')) {
-                    // 删除按钮 - 红色警告
+                    // ɾ����ť - ��ɫ����
                     button.style.background = 'var(--b3-theme-error-light)';
                     button.style.borderColor = 'var(--b3-theme-error)';
                     button.style.color = 'var(--b3-theme-error)';
                 } else if (button.classList.contains('refresh-rss')) {
-                    // 刷新按钮 - 绿色
+                    // ˢ�°�ť - ��ɫ
                     button.style.background = 'rgba(16, 185, 129, 0.15)';
                     button.style.borderColor = 'rgb(16, 185, 129)';
                     button.style.color = 'rgb(16, 185, 129)';
                 } else if (button.classList.contains('mark-read-rss')) {
-                    // 标记已读按钮 - 蓝色
+                    // ����Ѷ���ť - ��ɫ
                     button.style.background = 'rgba(59, 130, 246, 0.15)';
                     button.style.borderColor = 'rgb(59, 130, 246)';
                     button.style.color = 'rgb(59, 130, 246)';
@@ -589,7 +679,7 @@ private initSidebarUI(container: HTMLElement) {
             }
         });
 
-        // ✅ Handle click events
+        // Handle click events
         rssList.addEventListener("click", (e) => {
             const target = e.target as HTMLElement;
             
@@ -750,14 +840,16 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private setupResizerEvents(container: HTMLElement) {
-        // ✅ Fix #3: Clean up old event listeners before adding new ones
+        // Fix #3: Clean up old event listeners before adding new ones
         if (this.resizerMoveHandler) document.removeEventListener('mousemove', this.resizerMoveHandler);
         if (this.resizerUpHandler) document.removeEventListener('mouseup', this.resizerUpHandler);
         if (this.vResizerMoveHandler) document.removeEventListener('mousemove', this.vResizerMoveHandler);
         if (this.vResizerUpHandler) document.removeEventListener('mouseup', this.vResizerUpHandler);
         
         const hResizer = container.querySelector("#rssResizer") as HTMLElement;
+        const vResizer = container.querySelector("#rssVerticalResizer") as HTMLElement;
         const sidebar = container.querySelector("#rssSidebar") as HTMLElement;
+        const articleList = container.querySelector("#rssArticleList") as HTMLElement;
 
         if (hResizer && sidebar) {
             let startX = 0, startWidth = 0, resizing = false;
@@ -767,17 +859,28 @@ private initSidebarUI(container: HTMLElement) {
                 resizing = true;
                 this.isResizing = true;
                 startX = e.clientX;
-                startWidth = sidebar.offsetWidth;
+                // Re-query element on each drag to avoid stale references
+                const currentSidebar = container.querySelector("#rssSidebar") as HTMLElement;
+                if (!currentSidebar) return;
+                startWidth = currentSidebar.offsetWidth;
                 hResizer.style.background = "var(--b3-theme-primary)";
                 document.body.style.cursor = "col-resize";
                 document.body.style.userSelect = "none";
             });
 
             const onMove = (e: MouseEvent) => {
-                if (!resizing) return;
-                const parent = sidebar.parentElement!;
-                const pct = ((startWidth + e.clientX - startX) / parent.offsetWidth) * 100;
-                if (pct >= 10 && pct <= 35) sidebar.style.width = `${pct}%`;
+                if (!resizing || this.isResizing === false) return;
+                // Re-query element on each move to avoid null references
+                const currentSidebar = container.querySelector("#rssSidebar") as HTMLElement;
+                if (!currentSidebar || !currentSidebar.parentElement) return;
+                const parent = currentSidebar.parentElement;
+                try {
+                    const pct = ((startWidth + e.clientX - startX) / parent.offsetWidth) * 100;
+                    if (pct >= 10 && pct <= 35) currentSidebar.style.width = `${pct}%`;
+                } catch (err) {
+                    // Silently fail if parent is null/invalid
+                    resizing = false;
+                }
             };
 
             const onUp = () => {
@@ -797,9 +900,6 @@ private initSidebarUI(container: HTMLElement) {
             document.addEventListener("mouseup", onUp);
         }
 
-        const vResizer = container.querySelector("#rssVerticalResizer") as HTMLElement;
-        const articleList = container.querySelector("#rssArticleList") as HTMLElement;
-
         if (vResizer && articleList) {
             let startY = 0, startX = 0, startPct = 0, resizing = false;
 
@@ -807,13 +907,17 @@ private initSidebarUI(container: HTMLElement) {
                 e.preventDefault();
                 resizing = true;
                 this.isResizing = true;
-                const parent = articleList.parentElement!;
+                // Re-query element on each drag
+                const currentArticleList = container.querySelector("#rssArticleList") as HTMLElement;
+                if (!currentArticleList) return;
+                const parent = currentArticleList.parentElement;
+                if (!parent) return;
                 if (this.settings.layout === 'horizontal') {
                     startX = e.clientX;
-                    startPct = (articleList.offsetWidth / parent.offsetWidth) * 100;
+                    startPct = (currentArticleList.offsetWidth / parent.offsetWidth) * 100;
                 } else {
                     startY = e.clientY;
-                    startPct = (articleList.offsetHeight / parent.offsetHeight) * 100;
+                    startPct = (currentArticleList.offsetHeight / parent.offsetHeight) * 100;
                 }
                 vResizer.style.background = "var(--b3-theme-primary)";
                 const cursor = this.settings.layout === 'horizontal' ? 'col-resize' : 'row-resize';
@@ -822,16 +926,24 @@ private initSidebarUI(container: HTMLElement) {
             });
 
             const onMove = (e: MouseEvent) => {
-                if (!resizing) return;
-                const parent = articleList.parentElement!;
-                if (this.settings.layout === 'horizontal') {
-                    const delta = e.clientX - startX;
-                    const newPct = startPct + (delta / parent.offsetWidth) * 100;
-                    if (newPct >= 10 && newPct <= 80) articleList.style.flex = `0 0 ${newPct}%`;
-                } else {
-                    const delta = e.clientY - startY;
-                    const newPct = startPct + (delta / parent.offsetHeight) * 100;
-                    if (newPct >= 10 && newPct <= 80) articleList.style.flex = `0 0 ${newPct}%`;
+                if (!resizing || this.isResizing === false) return;
+                // Re-query element on each move
+                const currentArticleList = container.querySelector("#rssArticleList") as HTMLElement;
+                if (!currentArticleList || !currentArticleList.parentElement) return;
+                const parent = currentArticleList.parentElement;
+                try {
+                    if (this.settings.layout === 'horizontal') {
+                        const delta = e.clientX - startX;
+                        const newPct = startPct + (delta / parent.offsetWidth) * 100;
+                        if (newPct >= 10 && newPct <= 80) currentArticleList.style.flexBasis = `${newPct}%`;
+                    } else {
+                        const delta = e.clientY - startY;
+                        const newPct = startPct + (delta / parent.offsetHeight) * 100;
+                        if (newPct >= 10 && newPct <= 80) currentArticleList.style.flexBasis = `${newPct}%`;
+                    }
+                } catch (err) {
+                    // Silently fail if parent is null/invalid
+                    resizing = false;
                 }
             };
 
@@ -855,7 +967,7 @@ private initSidebarUI(container: HTMLElement) {
     // ==================== Subscription Management ====================
 
     private async selectSubscription(index: number, container: HTMLElement) {
-        // ✅ Prevent reloading if already selected
+        // Prevent reloading if already selected
         if (this.currentSubscriptionIndex === index) {
             logger.log("Subscription already selected, skipping reload");
             return;
@@ -864,11 +976,11 @@ private initSidebarUI(container: HTMLElement) {
         this.currentSubscriptionIndex = index;
         this.displayedArticleCount = 0;
         this.currentArticles = [];
-        this.currentArticleIndex = -1; // ✅ 重置选中文章索引
+        this.currentArticleIndex = -1; // ����ѡ����������
         this.isSearchMode = false;
         this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
 
-        // ✅ Clear article content window when switching subscriptions
+        // Clear article content window when switching subscriptions
         const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
         if (contentEl) {
             contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle || 'Select an article to read'}</div>`;
@@ -881,7 +993,7 @@ private initSidebarUI(container: HTMLElement) {
         container.querySelectorAll(".rss-item").forEach((item) => {
             const i = parseInt((item as HTMLElement).dataset.index!);
             item.classList.toggle("active", i === index);
-            // ✅ Removed inline styles - let CSS handle active state
+            // Removed inline styles - let CSS handle active state
         });
 
         articleListEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">
@@ -890,7 +1002,7 @@ private initSidebarUI(container: HTMLElement) {
         </div>`;
 
         try {
-            // ✅ Fix #1: Use cache-first strategy to reduce latency
+            // Fix #1: Use cache-first strategy to reduce latency
             const cached = await this.getCachedArticles(sub.id);
             
             // If we have recent cache (< 5 minutes), show it immediately
@@ -898,6 +1010,9 @@ private initSidebarUI(container: HTMLElement) {
             const hasRecentCache = cached.length > 0 && cached[0].cachedAt && (now - cached[0].cachedAt < 5 * 60 * 1000);
             
             if (hasRecentCache) {
+                // Track cache hit
+                this.perfMetrics.cacheHitCount++;
+                
                 // Show cached articles immediately for better UX
                 this.currentArticles = cached;
                 this.displayedArticleCount = 0;
@@ -907,24 +1022,41 @@ private initSidebarUI(container: HTMLElement) {
                 }
                 this.renderArticleList(container);
                 this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
+                
+                // Fetch fresh data in background without blocking UI
+                this.fetchAndCacheArticles(sub).then(articles => {
+                    // Only update if user hasn't switched to another subscription
+                    if (this.currentSubscriptionIndex === index) {
+                        this.currentArticles = articles;
+                        this.displayedArticleCount = 0;
+                        if (countEl) {
+                            const unread = articles.filter(a => !a.isRead).length;
+                            countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
+                        }
+                        this.renderArticleList(container);
+                        this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
+                    }
+                }).catch(err => {
+                    logger.warn("Background fetch failed:", err);
+                });
+            } else {
+                // No cache, fetch fresh data
+                const articles = await this.fetchAndCacheArticles(sub);
+                this.currentArticles = articles;
+                this.displayedArticleCount = 0;
+                if (countEl) {
+                    const unread = articles.filter(a => !a.isRead).length;
+                    countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
+                }
+                this.renderArticleList(container);
+                // Fix #5: Auto-load more if list doesn't fill the container
+                this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
             }
-            
-            // Fetch fresh data in background
-            const articles = await this.fetchAndCacheArticles(sub);
-            this.currentArticles = articles;
-            this.displayedArticleCount = 0;
-            if (countEl) {
-                const unread = articles.filter(a => !a.isRead).length;
-                countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
-            }
-            this.renderArticleList(container);
-            // Fix #5: Auto-load more if list doesn't fill the container
-            this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
         } catch (error) {
             logger.error("Failed to fetch RSS:", error);
             const msg = error instanceof Error ? error.message : String(error);
             articleListEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-theme-error);font-size:13px;">
-                ❌${this.i18n.networkError}: ${msg}
+               ${this.i18n.networkError}: ${msg}
             </div>`;
         }
     }
@@ -945,7 +1077,7 @@ private initSidebarUI(container: HTMLElement) {
                 </div>`,
                 width: "350px",
             });
-            // ✅Fix z-index to be above sticky header
+            //Fix z-index to be above sticky header
             requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
             
             const cancelBtn = dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement;
@@ -987,7 +1119,7 @@ private initSidebarUI(container: HTMLElement) {
             await this.saveData(STORAGE_NAME, this.subscriptions);
         } catch (error) {
             logger.error("Failed to save subscriptions after delete:", error);
-            showMessage(this.i18n.saveFailed || "保存失败", 3000);
+            showMessage(this.i18n.saveFailed || "����ʧ��", 3000);
         }
 
         if (this.currentSubscriptionIndex === index) {
@@ -1035,7 +1167,7 @@ private initSidebarUI(container: HTMLElement) {
             width: "400px",
         });
 
-        // ✅Fix #4: Ensure dialog is above article content sticky header
+        //Fix #4: Ensure dialog is above article content sticky header
         requestAnimationFrame(() => {
             const el = dialog.element;
             if (el) {
@@ -1066,7 +1198,7 @@ private initSidebarUI(container: HTMLElement) {
             const name = nameInput.value.trim();
             if (!url) { showMessage(this.i18n.feedUrl, 2000); return; }
 
-            // ✅ Check if subscription already exists (by URL)
+            // Check if subscription already exists (by URL)
             const existingSub = this.subscriptions.find(sub => sub.url === url);
             if (existingSub) {
                 showMessage(`${this.i18n.add} ${this.i18n.failed}: ${this.i18n.subscriptionExists}`, 3000);
@@ -1091,12 +1223,17 @@ private initSidebarUI(container: HTMLElement) {
     // ==================== Article Display ====================
 
     private renderArticleList(container: HTMLElement, append: boolean = false) {
+        const startTime = DEBUG ? performance.now() : 0;
+        this.perfMetrics.renderCount++;
+        
         const el = container.querySelector("#rssArticleList") as HTMLElement;
         const perPage = this.settings.articlesPerPage;
 
         if (!append) {
             this.displayedArticleCount = 0;
             this.isLoadingMore = false;
+            // Clear event bound marker when re-rendering from scratch
+            el.removeAttribute('data-events-bound');
         }
 
         const start = this.displayedArticleCount;
@@ -1118,14 +1255,14 @@ private initSidebarUI(container: HTMLElement) {
             const isSelected = this.currentArticleIndex === gi;
             const isUnread = !article.isRead;
             
-            // 计算样式
-            // 选中优先：选中=浅灰色+加粗；未读=默认色+加粗+色条；已读=浅灰色+正常
+            // ������ʽ
+            // ѡ�����ȣ�ѡ��=ǳ��ɫ+�Ӵ֣�δ��=Ĭ��ɫ+�Ӵ�+ɫ�����Ѷ�=ǳ��ɫ+����
             const fontWeight = isSelected ? 'bold' : (isUnread ? 'bold' : 'normal');
             const textColor = isSelected ? '#888888' : (isUnread ? 'var(--b3-font-color)' : '#888888');
-            // 未读且未选中：显示色条
+            // δ����δѡ�У���ʾɫ��
             const showUnreadBar = isUnread && !isSelected;
             
-            // ✅ Use cached thumbnail URL (extracted once during loading)
+            // Use cached thumbnail URL (extracted once during loading)
             const thumbnailUrl = article.thumbnail || '';
             
             return `
@@ -1133,13 +1270,13 @@ private initSidebarUI(container: HTMLElement) {
                     data-index="${gi}"
                     style="padding:12px 14px;border-bottom:1px solid var(--b3-border-color);cursor:pointer;display:flex;align-items:flex-start;gap:10px;">
                     
-                    <!-- 未读色条占位 - 所有状态都保留3px空间保证对齐 -->
+                    <!-- δ��ɫ��ռλ - ����״̬������3px�ռ䱣֤���� -->
                     <span style="width:3px;height:100%;min-height:20px;flex-shrink:0;${showUnreadBar ? 'background:var(--b3-theme-primary);' : 'background:transparent;'}border-radius:2px;align-self:stretch;margin-top:auto;margin-bottom:auto;"></span>
                     
-                    <!-- 缩略图（如果有） -->
+                    <!-- ����ͼ������У� -->
                     ${thumbnailUrl ? `<img src="${thumbnailUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
                     
-                    <!-- 标题和日期 -->
+                    <!-- ��������� -->
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:${fs.listItem};font-weight:${fontWeight};color:${textColor};line-height:1.4;margin-bottom:4px;">
                             ${this.highlightSearchTerm(article.title)}
@@ -1163,20 +1300,27 @@ private initSidebarUI(container: HTMLElement) {
 
         if (hasMore) {
             el.insertAdjacentHTML("beforeend", `<div class="loading-more" style="padding:12px;text-align:center;color:var(--b3-font-color-quaternary);font-size:12px;">
-                ↓ ${this.i18n.loadMore} (${this.currentArticles.length - end})
+                �� ${this.i18n.loadMore} (${this.currentArticles.length - end})
             </div>`);
         }
 
         this.displayedArticleCount = end;
-        // ✅ Always setup events (cloning prevents duplicates)
+        // Always setup events (cloning prevents duplicates)
         this.setupArticleListEvents(container);
+        
+        // Performance tracking
+        if (DEBUG && startTime > 0) {
+            const duration = performance.now() - startTime;
+            this.perfMetrics.totalRenderTime += duration;
+            logger.log(`[Perf] Render: ${duration.toFixed(0)}ms (avg: ${(this.perfMetrics.totalRenderTime / this.perfMetrics.renderCount).toFixed(0)}ms, items: ${page.length})`);
+        }
     }
 
-    // ✅Fix #5: Infinite scroll - properly append without removing existing items
+    //Fix #5: Infinite scroll - properly append without removing existing items
     private setupInfiniteScroll(container: HTMLElement) {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
 
-        // ✅ Remove old handler if exists to prevent duplicate listeners
+        // Remove old handler if exists to prevent duplicate listeners
         if (this.listScrollHandler && articleList) {
             articleList.removeEventListener("scroll", this.listScrollHandler);
         }
@@ -1219,7 +1363,7 @@ private initSidebarUI(container: HTMLElement) {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
         if (!articleList || this.currentArticles.length === 0) return;
         
-        // ✅ Prevent infinite loop - max 3 retries
+        // Prevent infinite loop - max 3 retries
         if (this.autoLoadRetryCount >= 3) {
             this.autoLoadRetryCount = 0;
             return;
@@ -1233,7 +1377,7 @@ private initSidebarUI(container: HTMLElement) {
                 this.isLoadingMore = true;
                 this.autoLoadRetryCount++;
                 this.renderArticleList(container, true);
-                // ✅ Fix: Only check once after render, don't recursively call
+                // Fix: Only check once after render, don't recursively call
                 this.safeSetTimeout(() => {
                     this.isLoadingMore = false;
                     // Don't recursively call checkAndLoadMore - just reset counter
@@ -1252,15 +1396,16 @@ private initSidebarUI(container: HTMLElement) {
     // No custom toggleMinimize needed - span with data-type="min" triggers SiYuan's native minimize logic
 
     private setupArticleListEvents(container: HTMLElement) {
-        let articleList = container.querySelector("#rssArticleList");
+        const articleList = container.querySelector("#rssArticleList");
         if (!articleList) return;
 
-        // ✅ Remove old event listeners by cloning and replacing the element
-        const newArticleList = articleList.cloneNode(true) as HTMLElement;
-        articleList.parentNode!.replaceChild(newArticleList, articleList);
-        articleList = newArticleList;  // Update reference to new element
+        // Use event delegation instead of cloning to avoid breaking resizer references
+        // Check if events are already bound by using a data attribute marker
+        if (articleList.getAttribute('data-events-bound') === 'true') {
+            return; // Events already bound, skip
+        }
 
-        // 点击事件
+        // Click event - using event delegation
         articleList.addEventListener("click", (e) => {
             const item = (e.target as HTMLElement).closest(".article-item");
             if (!item) return;
@@ -1269,16 +1414,19 @@ private initSidebarUI(container: HTMLElement) {
             this.currentArticleIndex = index;
             this.selectArticle(index, container);
             
-            // 阻止事件冒泡，防止重复触发
+            // Prevent event bubbling to avoid duplicate triggers
             e.stopPropagation();
         });
+
+        // Mark events as bound
+        articleList.setAttribute('data-events-bound', 'true');
     }
 
     private async selectArticle(index: number, container: HTMLElement) {
         const article = this.currentArticles[index];
         if (!article) return;
 
-        // ✅ Optimization: Update DOM classes instead of re-rendering entire list
+        // Optimization: Update DOM classes instead of re-rendering entire list
         // Remove 'selected' class from previously selected item
         const prevSelected = container.querySelector('.article-item.selected') as HTMLElement;
         if (prevSelected) {
@@ -1305,7 +1453,7 @@ private initSidebarUI(container: HTMLElement) {
             article.isRead = true;
             this.readStatus[article.id] = { isRead: true, readAt: Date.now() };
             
-            // ✅ Debounce save operations to prevent excessive writes
+            // Debounce save operations to prevent excessive writes
             if (this.saveDebounceTimer) {
                 clearTimeout(this.saveDebounceTimer);
             }
@@ -1319,7 +1467,7 @@ private initSidebarUI(container: HTMLElement) {
             }, 500); // Wait 500ms before saving
         }
 
-        // ✅ Add 'selected' class to new item and update styles
+        // Add 'selected' class to new item and update styles
         const newItem = container.querySelector(`.article-item[data-index="${index}"]`) as HTMLElement;
         if (newItem) {
             newItem.classList.add('selected');
@@ -1339,7 +1487,7 @@ private initSidebarUI(container: HTMLElement) {
         // Set article content
         const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
         const fontSize = this.getFontSizeStyle();
-        // ✅Fix #2: Sticky header for article with save button always visible
+        //Fix #2: Sticky header for article with save button always visible
         contentEl.innerHTML = `
             <div style="position:sticky;top:0;z-index:10;background:var(--b3-theme-background);padding:12px 20px 10px;border-bottom:1px solid var(--b3-border-color);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);">
                 <div style="flex:1;min-width:0;">
@@ -1349,7 +1497,7 @@ private initSidebarUI(container: HTMLElement) {
                     <div style="font-size:${fontSize.meta};color:var(--b3-font-color-quaternary);display:flex;gap:10px;align-items:center;">
                         <span>${article.pubDate ? this.formatDate(article.pubDate) : ''}</span>
                         <a href="${article.link}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
-                            ${this.i18n.originalLink} ↗                        </a>
+                            ${this.i18n.originalLink} �J                        </a>
                     </div>
                 </div>
                 <button class="save-to-siyuan-btn" data-article-id="${article.id}" style="flex-shrink:0;width:32px;height:32px;border-radius:50%;border:none;background:var(--b3-theme-primary);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.15);" title="${this.i18n.saveToSiYuan}" aria-label="${this.i18n.saveToSiYuan}">
@@ -1362,10 +1510,10 @@ private initSidebarUI(container: HTMLElement) {
                 </div>
             </div>`;
 
-        // ✅ Fix #2: Scroll to top when opening article
+        // Fix #2: Scroll to top when opening article
         contentEl.scrollTop = 0;
 
-        // ✅ Fix: Use event delegation to avoid closure memory leak
+        // Fix: Use event delegation to avoid closure memory leak
         // Store current article in a weak reference instead of capturing in closure
         const saveBtn = contentEl.querySelector(".save-to-siyuan-btn") as HTMLButtonElement;
         if (saveBtn) {
@@ -1379,7 +1527,7 @@ private initSidebarUI(container: HTMLElement) {
                 saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
             };
             saveBtn.onclick = () => {
-                // ✅ Lookup article by ID instead of capturing it in closure
+                // Lookup article by ID instead of capturing it in closure
                 const articleId = saveBtn.getAttribute('data-article-id');
                 const currentArticle = this.currentArticles.find(a => a.id === articleId);
                 if (currentArticle) {
@@ -1516,16 +1664,16 @@ private initSidebarUI(container: HTMLElement) {
         const el = parent.querySelector(selector);
         if (!el) return "";
 
-        // 优先尝试 innerHTML
+        // ���ȳ��� innerHTML
         let html = el.innerHTML || "";
 
-        // innerHTML 为空时，textContent 可能包含实际内容（如CDATA或纯文本）
+        // innerHTML Ϊ��ʱ��textContent ���ܰ���ʵ�����ݣ���CDATA���ı���
         const textContent = el.textContent || "";
         if (!html || html.length < textContent.length) {
             html = textContent;
         }
 
-        // 如果看起来像HTML但 innerHTML 为空，尝试二次DOM解析
+        // �����������HTML�� innerHTML Ϊ�գ����Զ���DOM����
         if ((!html || html === textContent) && textContent.includes("<") && textContent.includes(">")) {
             try {
                 const temp = document.createElement("div");
@@ -1535,7 +1683,7 @@ private initSidebarUI(container: HTMLElement) {
                     html = parsed;
                 }
             } catch {
-                // 二次解析失败，保持原值
+                // ���ν���ʧ�ܣ�����ԭֵ
             }
         }
 
@@ -1549,11 +1697,11 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private async fetchAndCacheArticles(sub: Subscription): Promise<Article[]> {
-        const feed = await this.fetchAndParseRSS(sub.url);
+        const feed = await this.fetchWithRetry(sub, 3);
         const cached = await this.getCachedArticles(sub.id);
 
         const newArticles = feed.items.map(item => {
-            // ✅ Extract thumbnail once during loading, cache it in article object
+            // Extract thumbnail once during loading, cache it in article object
             let thumbnailUrl = '';
             const contentToSearch = item.content || item.description || '';
             if (contentToSearch) {
@@ -1576,6 +1724,62 @@ private initSidebarUI(container: HTMLElement) {
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
         return merged;
+    }
+
+    // Fetch with exponential backoff retry and request deduplication
+    private async fetchWithRetry(sub: Subscription, maxRetries: number): Promise<{ items: RSSItem[] }> {
+        // Request lock: prevent duplicate concurrent requests for same subscription
+        const lockKey = sub.id;
+        if (this.pendingRequests.has(lockKey)) {
+            logger.log(`Request already in progress for ${sub.name}, reusing existing promise`);
+            return this.pendingRequests.get(lockKey)!;
+        }
+
+        // Create the actual fetch promise
+        const fetchPromise = (async () => {
+            let lastError: Error | null = null;
+            
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    const startTime = DEBUG ? performance.now() : 0;
+                    this.perfMetrics.fetchCount++;
+                    
+                    const result = await this.fetchAndParseRSS(sub.url);
+                    
+                    if (DEBUG && startTime > 0) {
+                        const duration = performance.now() - startTime;
+                        this.perfMetrics.totalFetchTime += duration;
+                        logger.log(`[Perf] Fetch ${sub.name}: ${duration.toFixed(0)}ms (avg: ${(this.perfMetrics.totalFetchTime / this.perfMetrics.fetchCount).toFixed(0)}ms)`);
+                    }
+                    
+                    return result;
+                } catch (error) {
+                    lastError = error instanceof Error ? error : new Error(String(error));
+                    logger.warn(`Fetch attempt ${attempt + 1}/${maxRetries + 1} failed for ${sub.name}:`, lastError.message);
+                    
+                    // Don't retry on last attempt
+                    if (attempt < maxRetries) {
+                        // Exponential backoff: 1s, 2s, 4s...
+                        const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+                        logger.log(`Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
+            }
+            
+            // All retries failed
+            throw lastError || new Error(`Failed to fetch ${sub.name} after ${maxRetries + 1} attempts`);
+        })();
+
+        // Store in pending map
+        this.pendingRequests.set(lockKey, fetchPromise);
+
+        try {
+            return await fetchPromise;
+        } finally {
+            // Always clean up the lock
+            this.pendingRequests.delete(lockKey);
+        }
     }
 
     private generateArticleId(link: string): string {
@@ -1641,11 +1845,11 @@ private initSidebarUI(container: HTMLElement) {
         this.currentArticleIndex = -1;
 
         const countEl = container.querySelector("#articleCount") as HTMLElement;
-        if (countEl) countEl.textContent = `🔍 ${results.length}`;
+        if (countEl) countEl.textContent = `?? ${results.length}`;
 
         if (results.length === 0) {
             (container.querySelector("#rssArticleList") as HTMLElement).innerHTML =
-                `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">🔍 ${this.i18n.noResults}</div>`;
+                `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">?? ${this.i18n.noResults}</div>`;
             return;
         }
 
@@ -1691,7 +1895,7 @@ private initSidebarUI(container: HTMLElement) {
         showMessage(this.i18n.markAllReadSuccess, 2000);
     }
 
-    // ✅ 标记单个订阅源为已读
+    // ��ǵ�������ԴΪ�Ѷ�
     private async markSubscriptionRead(index: number, container: HTMLElement) {
         if (index < 0 || index >= this.subscriptions.length) return;
         
@@ -1704,7 +1908,7 @@ private initSidebarUI(container: HTMLElement) {
                 articles = await this.fetchAndCacheArticles(sub);
             }
             
-            // Mark all articles as read
+            // Mark all articles as read in cache
             let markedCount = 0;
             for (const a of articles) {
                 if (!a.isRead) {
@@ -1719,9 +1923,25 @@ private initSidebarUI(container: HTMLElement) {
             
             showMessage(`${this.i18n.markAllReadSuccess} (${markedCount})`, 2000);
             
-            // If currently viewing this subscription, refresh article list
+            // Always refresh article list if currently viewing this subscription
+            // This ensures the UI reflects the updated read status immediately
             if (this.currentSubscriptionIndex === index && this.container) {
+                // Update currentArticles in-place to ensure same references
+                for (const currentArticle of this.currentArticles) {
+                    const cachedArticle = articles.find(a => a.id === currentArticle.id);
+                    if (cachedArticle) {
+                        // Update the same object reference to trigger re-render
+                        currentArticle.isRead = true;
+                    }
+                }
+                // Re-render to show updated read status
                 this.renderArticleList(this.container, false);
+                
+                // Update article count display
+                const countEl = this.container.querySelector("#articleCount") as HTMLElement;
+                if (countEl) {
+                    countEl.textContent = `${this.currentArticles.length}`;
+                }
             }
         } catch (error) {
             logger.error("Failed to mark subscription as read:", error);
@@ -1729,7 +1949,7 @@ private initSidebarUI(container: HTMLElement) {
         }
     }
 
-    // ✅ 刷新单个订阅源
+    // ˢ�µ�������Դ
     private async refreshSubscription(index: number, container: HTMLElement) {
         if (index < 0 || index >= this.subscriptions.length) return;
         
@@ -1741,7 +1961,7 @@ private initSidebarUI(container: HTMLElement) {
             
             showMessage(this.i18n.refreshSuccess, 1500);
             
-            // 如果当前选中的是这个订阅源，刷新显示
+            // �����ǰѡ�е����������Դ��ˢ����ʾ
             if (this.currentSubscriptionIndex === index && this.container) {
                 this.selectSubscription(index, this.container);
             }
@@ -1757,10 +1977,10 @@ private initSidebarUI(container: HTMLElement) {
         showMessage(this.i18n.refreshSuccess, 1500);
     }
 
-    // ✅ 保存文章到思源：让用户选择目标笔记本
+    // �������µ�˼Դ�����û�ѡ��Ŀ��ʼǱ�
     private async saveArticleToSiYuan(article: Article) {
         try {
-            // 获取笔记本列表
+            // ��ȡ�ʼǱ��б�
             const notebooks = await fetchSyncPost("/api/notebook/lsNotebooks", {});
             const allNotebooks = notebooks.data?.notebooks || [];
             const openNotebooks = allNotebooks.filter((nb: any) => !nb.closed);
@@ -1770,9 +1990,9 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
 
-            // 弹出笔记本选择对话框
+            // �����ʼǱ�ѡ��Ի���
             const targetNbId = await this.showNotebookSelectionDialog(openNotebooks);
-            if (!targetNbId) return; // 用户取消选择
+            if (!targetNbId) return; // �û�ȡ��ѡ��
 
             let fileName = article.title
                 .replace(/[/\\:*?"<>|]/g, " ")
@@ -1781,23 +2001,23 @@ private initSidebarUI(container: HTMLElement) {
                 .substring(0, 180);
             if (!fileName) fileName = `RSS_${Date.now()}`;
 
-            // ✅ 保留图片和排版：使用 htmlToMarkdown 转换（支持 img/strong/em/links 等）
+            // ����ͼƬ���Ű棺ʹ�� htmlToMarkdown ת����֧�� img/strong/em/links �ȣ�
             const articleHTML = article.content || article.description || "";
             logger.log("Save article:", article.title, "contentLen:", article.content?.length, "descLen:", article.description?.length, "htmlLen:", articleHTML.length);
             logger.log("Content preview (first 500):", articleHTML.substring(0, 500));
             const articleMarkdown = this.htmlToMarkdown(articleHTML);
             logger.log("Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
 
-            // 元信息行
+            // Ԫ��Ϣ��
             let metaLines: string[] = [];
             if (article.pubDate) {
                 metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
             }
             if (article.link) {
-                metaLines.push(`> [原文链接](${article.link})`);
+                metaLines.push(`> [ԭ������](${article.link})`);
             }
 
-            // 构建完整 Markdown（一次性写入，避免 insertBlock 块树问题）
+            // �������� Markdown��һ����д�룬���� insertBlock �������⣩
             const fullMd = [
                 `# ${fileName}`,
                 ...metaLines,
@@ -1805,11 +2025,11 @@ private initSidebarUI(container: HTMLElement) {
                 articleMarkdown
             ].join("\n");
 
-            showMessage(`${this.i18n.savingTo}「${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}」…`, 2000);
+            showMessage(`${this.i18n.savingTo}��${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}����`, 2000);
 
             logger.log("Full markdown length:", fullMd.length, "preview:", fullMd.substring(0, 300));
 
-            // Step 1: 创建文档（一次性写入全部内容）
+            // Step 1: �����ĵ���һ����д��ȫ�����ݣ�
             const res = await fetchSyncPost("/api/filetree/createDocWithMd", {
                 notebook: targetNbId,
                 path: `/${fileName}`,
@@ -1818,7 +2038,7 @@ private initSidebarUI(container: HTMLElement) {
             logger.log("Create doc response:", JSON.stringify(res).substring(0, 500));
 
             if (res.code === 201 || res.code === 202) {
-                // 文件已存在，用唯一名称重试
+                // �ļ��Ѵ��ڣ���Ψһ��������
                 const uniqueName = `${fileName}_${Date.now().toString(36)}`;
                 const res2 = await fetchSyncPost("/api/filetree/createDocWithMd", {
                     notebook: targetNbId,
@@ -1826,42 +2046,42 @@ private initSidebarUI(container: HTMLElement) {
                     markdown: fullMd.replace(`# ${fileName}`, `# ${uniqueName}`)
                 });
                 if (!res2.data) {
-                    showMessage(`${this.i18n.saveFailed}：${this.i18n.docExists}`, 3000);
+                    showMessage(`${this.i18n.saveFailed}��${this.i18n.docExists}`, 3000);
                     return;
                 }
             } else if (!res.data) {
-                showMessage(`${this.i18n.saveFailed}：${this.i18n.docCreateFailed}`, 3000);
+                showMessage(`${this.i18n.saveFailed}��${this.i18n.docCreateFailed}`, 3000);
                 return;
             }
 
             const docId = res.data;
 
-            // Step 2: 刷新事务
+            // Step 2: ˢ������
             await fetchSyncPost("/api/sqlite/flushTransaction", {}).catch(() => {});
 
-            // Step 3: 转换远程图片为本地资源（参考官方 siyuan-chrome）
+            // Step 3: ת��Զ��ͼƬΪ������Դ���ο��ٷ� siyuan-chrome��
             if (docId) {
                 fetchSyncPost("/api/format/netImg2LocalAssets", {
                     id: docId,
                     url: article.link || ""
-                }).catch(() => {}); // 静默失败，不影响保存
+                }).catch(() => {}); // ��Ĭʧ�ܣ���Ӱ�챣��
             }
 
-            // Step 4: 记录本次使用的笔记本
+            // Step 4: ��¼����ʹ�õıʼǱ�
             this.settings.lastUsedNotebookId = targetNbId;
             await this.saveSettings();
 
             logger.log("Save complete:", fileName);
-            showMessage(`✅ ${this.i18n.saved}：${fileName}`, 4000);
+            showMessage(`${this.i18n.saved}��${fileName}`, 4000);
 
         } catch (error) {
             console.error("[RSS] Save error:", error);
-            showMessage(`${this.i18n.saveFailed}：${error}`, 3000);
+            showMessage(`${this.i18n.saveFailed}��${error}`, 3000);
         }
     }
 
 
-    // ✅Fix #1: DOM-based HTML鈫扢arkdown conversion (replaces fragile regex approach)
+    //Fix #1: DOM-based HTML→Markdown conversion (replaces fragile regex approach)
     // Regex-based conversion produced malformed markdown that crashed SiYuan's parser,
     // causing "Cannot read properties of null reading 'removeAttribute'" when opening docs.
     private htmlToMarkdown(html: string): string {
@@ -1926,7 +2146,7 @@ private initSidebarUI(container: HTMLElement) {
                 return inner ? (inner + "\n\n") : "";
             }
             case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": {
-                // ✅ Fix: 使用正确的 markdown 标题格式 # 前置
+                // Fix: ʹ����ȷ�� markdown �����ʽ # ǰ��
                 const level = parseInt(tag[1]);
                 const prefix = "#".repeat(level);
                 const inner = this._nodeToMarkdown(el, depth + 1);
@@ -2082,13 +2302,13 @@ ${escaped}
 
     // ==================== Dialogs ====================
 
-    // 笔记本选择对话框
+    // �ʼǱ�ѡ��Ի���
     private async showNotebookSelectionDialog(notebooks: any[]): Promise<string | null> {
         return new Promise((resolve) => {
             const dialog = new Dialog({
-                title: `📁 ${this.i18n.selectNotebook || '选择笔记本'}`,
+                title: `?? ${this.i18n.selectNotebook || 'ѡ��ʼǱ�'}`,
                 content: `<div class="b3-dialog__content" style="padding:16px;">
-                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || '请选择保存位置'}</div>
+                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || '��ѡ�񱣴�λ��'}</div>
                     <div style="display:flex;align-items:center;gap:12px;">
                         <select class="b3-select fn__block" id="notebookSelect" style="font-size:14px;flex:1;">
                             ${notebooks.map((nb, index) => 
@@ -2097,7 +2317,7 @@ ${escaped}
                         </select>
                         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
                             <input type="checkbox" class="b3-switch" id="rememberNotebook" checked>
-                            ${this.i18n.rememberChoice || '记住选择'}
+                            ${this.i18n.rememberChoice || '��סѡ��'}
                         </label>
                     </div>
                 </div>
@@ -2133,7 +2353,7 @@ ${escaped}
 
     private showHelpDialog() {
         const dialog = new Dialog({
-            title: `📖 ${this.i18n.helpTitle}`,
+            title: `?? ${this.i18n.helpTitle}`,
             content: `<div class="b3-dialog__content" style="padding:16px;font-size:13px;">
                 <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;">
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">J/K</kbd></div><div>${this.i18n.helpPrevNext}</div>
@@ -2156,7 +2376,7 @@ ${escaped}
 
     private showSettingsDialog(container: HTMLElement) {
         const dialog = new Dialog({
-            title: `⚙ ${this.i18n.settings}`,
+            title: `? ${this.i18n.settings}`,
             content: `<div class="b3-dialog__content settings-panel" style="padding:16px;font-size:13px;">
                 <div class="b3-label">
                     <label>${this.i18n.articlesPerPage}</label>
@@ -2202,7 +2422,7 @@ ${escaped}
             </div>`,
             width: "400px",
         });
-        // ✅Fix z-index to be above sticky header
+        //Fix z-index to be above sticky header
         requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
 
         // Live preview: update font size label as slider moves
@@ -2226,7 +2446,7 @@ ${escaped}
             await this.saveData(SETTINGS_NAME, this.settings);
             this.setupAutoRefresh(container);
             
-            // ✅ Re-render entire UI to apply layout and font changes
+            // Re-render entire UI to apply layout and font changes
             // initSidebarUI will rebuild all DOM and rebind events
             
             // Reset selection state to force reload after UI rebuild
@@ -2275,7 +2495,7 @@ ${escaped}
         // Bold/italic
         md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
         md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
-        // Block elements → newlines
+        // Block elements �� newlines
         md = md.replace(/<\/p>/gi, '\n\n');
         md = md.replace(/<\/div>/gi, '\n');
         md = md.replace(/<br\s*\/?>/gi, '\n');
@@ -2304,7 +2524,7 @@ ${escaped}
         c = c.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
         c = c.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
         c = c.replace(/javascript:/gi, '');
-        // ✅ Fix: 不再给 img 添加内联 style（会导致思源 AST 解析崩溃）
+        // Fix: ���ٸ� img �������� style���ᵼ��˼Դ AST ����������
         c = c.replace(/<img(?![^>]*loading=)/gi, '<img loading="lazy" ');
         return c;
     }
@@ -2327,3 +2547,5 @@ ${escaped}
         return date.toLocaleDateString(locale);
     }
 }
+
+
