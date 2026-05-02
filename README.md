@@ -47,10 +47,10 @@ git clone https://github.com/lnedpaul/siyuan-rss-reader.git
 cd siyuan-rss-reader
 
 # Install dependencies
-pnpm install
+npm install
 
 # Build
-pnpm run build
+npm run build
 
 # The dist/ folder contains the plugin files
 # Copy to SiYuan/data/plugins/siyuan-rss-reader/
@@ -60,16 +60,16 @@ pnpm run build
 
 ```bash
 # Install dependencies
-pnpm install
+npm install
 
 # Development mode (watch for changes)
-pnpm run dev
+npm run dev
 
 # Production build
-pnpm run build
+npm run build
 
-# Lint
-pnpm run lint
+# Type check
+npm run type-check
 ```
 
 ## 📁 Project Structure
@@ -108,8 +108,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for g
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Run lint: `pnpm run lint`
-5. Build: `pnpm run build`
+4. Run type check: `npm run type-check`
+5. Build: `npm run build`
 6. Submit a pull request
 
 ## 📄 License

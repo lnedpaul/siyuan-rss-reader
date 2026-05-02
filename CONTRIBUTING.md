@@ -5,8 +5,8 @@ Thank you for your interest in contributing to the RSS Reader plugin for SiYuan 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js >= 16
-- pnpm >= 8
+- Node.js >= 18
+- npm >= 9
 - Git
 
 ### Development Setup
@@ -19,12 +19,12 @@ Thank you for your interest in contributing to the RSS Reader plugin for SiYuan 
 
 2. **Install dependencies**
    ```bash
-   pnpm install
+   npm install
    ```
 
 3. **Start development mode**
    ```bash
-   pnpm run dev
+   npm run dev
    ```
 
 4. **Load plugin in SiYuan**
@@ -35,9 +35,9 @@ Thank you for your interest in contributing to the RSS Reader plugin for SiYuan 
 
 - Use TypeScript for all new code
 - Follow existing code style
-- Run linting before committing:
+- Run type checking before committing:
   ```bash
-  pnpm run lint
+  npm run type-check
   ```
 
 ## 🧪 Testing
@@ -52,7 +52,7 @@ Currently, the project uses manual testing. Please test your changes thoroughly:
 ## 📦 Building for Production
 
 ```bash
-pnpm run build
+npm run build
 ```
 
 The built files will be in the `dist/` directory.
@@ -61,8 +61,8 @@ The built files will be in the `dist/` directory.
 
 1. Create a feature branch from `main`
 2. Make your changes
-3. Run linting: `pnpm run lint`
-4. Build and test: `pnpm run build`
+3. Run type check: `npm run type-check`
+4. Build and test: `npm run build`
 5. Commit your changes with clear messages
 6. Push to your fork
 7. Submit a Pull Request

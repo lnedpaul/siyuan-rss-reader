@@ -47,10 +47,10 @@ git clone https://github.com/lnedpaul/siyuan-rss-reader.git
 cd siyuan-rss-reader
 
 # 安装依赖
-pnpm install
+npm install
 
 # 构建
-pnpm run build
+npm run build
 
 # dist/ 目录包含插件文件
 # 复制到 SiYuan/data/plugins/siyuan-rss-reader/
@@ -60,16 +60,16 @@ pnpm run build
 
 ```bash
 # 安装依赖
-pnpm install
+npm install
 
 # 开发模式（监听文件变化）
-pnpm run dev
+npm run dev
 
 # 生产构建
-pnpm run build
+npm run build
 
-# 代码检查
-pnpm run lint
+# 类型检查
+npm run type-check
 ```
 
 ## 📁 项目结构
@@ -108,8 +108,8 @@ siyuan-rss-reader/
 1. Fork 本仓库
 2. 创建功能分支：`git checkout -b feature/my-feature`
 3. 进行修改
-4. 运行代码检查：`pnpm run lint`
-5. 构建：`pnpm run build`
+4. 运行类型检查：`npm run type-check`
+5. 构建：`npm run build`
 6. 提交 Pull Request
 
 ## 📄 许可证
