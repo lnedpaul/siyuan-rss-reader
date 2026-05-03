@@ -2,6 +2,8 @@ const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const webpack = require('webpack');
+const ZipPlugin = require('zip-webpack-plugin');
+const fs = require('fs');
 const pluginJson = require('./plugin.json');
 
 module.exports = (env, argv) => {
@@ -51,15 +53,10 @@ module.exports = (env, argv) => {
         filename: 'index.css',
       }),
       new webpack.BannerPlugin({
-        banner: `
-/*! 
- * ${pluginJson.name} v${pluginJson.version}
- * ${pluginJson.url}
- * 
- * Copyright (c) ${new Date().getFullYear()} ${pluginJson.author}
- * Licensed under MIT License
- */
-        `.trim(),
+        banner: () => {
+          const license = fs.readFileSync('LICENSE').toString();
+          return `/*!\n${license}\n*/`;
+        },
         raw: true,
         entryOnly: true,
       }),
@@ -73,6 +70,13 @@ module.exports = (env, argv) => {
           { from: 'README_zh_CN.md', to: 'README_zh_CN.md', noErrorOnMissing: true },
         ],
       }),
+      ...(isProd ? [
+        new ZipPlugin({
+          filename: 'package.zip',
+          algorithm: 'gzip',
+          include: [/\.js$/, /\.css$/, /plugin\.json$/, /icon\.png$/, /preview\.png$/, /README.*\.md$/, /i18n\//],
+        })
+      ] : []),
     ],
     externals: {
       siyuan: 'siyuan',
