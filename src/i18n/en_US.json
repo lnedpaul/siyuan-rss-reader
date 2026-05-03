@@ -83,5 +83,7 @@
     "rememberChoice": "Remember choice",
     "failed": "Failed",
     "subscriptionExists": "Subscription already exists, cannot add duplicate",
-    "minimize": "Minimize"
+    "minimize": "Minimize",
+    "toggleDock": "Toggle RSS Reader",
+    "openRssReader": "Open RSS Reader"
 }

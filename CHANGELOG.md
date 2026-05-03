@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-05-03
+
+### Removed
+- **FORCED_RELOAD_GUIDE.md**: Removed obsolete troubleshooting guide
+- **TROUBLESHOOTING.md**: Removed outdated diagnostic documentation (content integrated into CHANGELOG)
+- **assets/icons/**: Deleted unused SVG icon files (9 files) - icons are now defined inline in code
+- **docs/DESIGN.md**: Removed design document (project completed)
+
+### Changed
+- **Project Structure**: Cleaner, more focused project layout
+- **Documentation**: Consolidated and streamlined documentation
+- **preview.png**: Kept for SiYuan marketplace listing requirement
+
+---
+
+## [0.1.8] - 2026-05-03
+
+### Fixed
+- **SiYuan 3.6.5 Compatibility**: Moved `addTopBar()` from `onload()` to `onLayoutReady()` lifecycle method
+- **API Migration**: Fixed critical API usage issue - SiYuan 3.3+ requires `addTopBar()` to be called in `onLayoutReady()`
+
+### Changed
+- **Lifecycle Compliance**: Plugin now follows SiYuan 3.3+ API specifications correctly
+- **Version Compatibility**: Updated to work properly with SiYuan 3.6.5
+
+---
+
+## [0.1.7] - 2026-05-03
+
+### Fixed
+- **Top Bar Icon Hidden**: Added robust JavaScript-based hiding logic with MutationObserver to ensure top bar icon stays hidden
+- **Dual Display Issue**: Resolved conflict between top bar icon and plugin list entry - now only shows in management list
+
+### Changed
+- **Hide Mechanism**: Enhanced from simple `display: none` to comprehensive style hiding with MutationObserver monitoring
+- **Plugin Visibility**: Plugin correctly appears in Settings → Plugins list while top bar icon is completely hidden
+
+---
+
+## [0.1.6] - 2026-05-03
+
+### Removed
+- **Top Bar Icon**: Removed `addTopBar()` to eliminate duplicate icon in top toolbar
+- Plugin now only shows in **Settings → Plugins management list** and **Dock bottom bar**
+
+### Changed
+- **Cleaner UI**: Removed redundant top bar icon, keeping only Dock bottom icon and plugin management entry
+- **Command Palette**: Still accessible via command palette with "Open RSS Reader" command
+
+---
+
 ## [0.1.5] - 2026-05-03
 
 ### Added

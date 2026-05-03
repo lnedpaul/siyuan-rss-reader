@@ -83,5 +83,7 @@
     "rememberChoice": "记住选择",
     "failed": "失败",
     "subscriptionExists": "订阅源已存在，请勿重复添加",
-    "minimize": "最小化"
+    "minimize": "最小化",
+    "toggleDock": "打开/关闭 RSS 阅读器",
+    "openRssReader": "打开 RSS 阅读器"
 }

@@ -1,4 +1,19 @@
 // RSS Reader Plugin Styles
+
+// Hide top bar icon - keep only plugin list entry
+// This selector targets the top bar button created by addTopBar()
+#barPlugins [data-type="rss_reader_dock_topbar"],
+.toolbar__item[data-type="rss_reader_dock_topbar"],
+.bar__plugin .toolbar__item:has(svg use[xlink\:href="#iconRSSMain"]),
+#barPlugins > .toolbar__item:has(svg use[xlink\:href="#iconRSSMain"]) {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
 :root {
     // ✅ Magic numbers extracted as CSS variables for easy maintenance
     --rss-button-size: 24px;

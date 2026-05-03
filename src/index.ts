@@ -287,8 +287,7 @@ export default class RSSReaderPlugin extends Plugin {
         // Register custom icons for the plugin
         this.registerCustomIcons();
 
-        // Register command to show plugin menu item in top bar
-        // This enables the plugin to appear in SiYuan's command palette and menu
+        // Register command to show plugin menu item in command palette
         this.addCommand({
             langKey: "openRssReader",
             hotkey: "",
@@ -307,23 +306,7 @@ export default class RSSReaderPlugin extends Plugin {
             }
         });
 
-        // Add top bar icon - REQUIRED for plugin to appear in Settings panel plugin list
-        this.addTopBar({
-            icon: "iconRSSMain",
-            title: this.i18n.rssReader,
-            position: "right",
-            callback: () => {
-                // Toggle the dock panel visibility when clicking top bar icon
-                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
-                if (dockPanel) {
-                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
-                    if (minBtn) minBtn.click();
-                } else {
-                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
-                    if (dockIconBtn) dockIconBtn.click();
-                }
-            }
-        });
+        // NOTE: addTopBar() moved to onLayoutReady() for SiYuan 3.3+ compatibility
 
         const plugin = this;
         this.addDock({
@@ -348,6 +331,48 @@ export default class RSSReaderPlugin extends Plugin {
 
         this.startScheduledUpdates();
         this.registerKeyboardShortcuts();
+    }
+
+    // SiYuan 3.3+: addTopBar() must be called in onLayoutReady(), not onload()
+    onLayoutReady() {
+        // Add top bar icon - REQUIRED for plugin to appear in Settings → Plugins management list
+        // We'll hide this icon to avoid duplicate icons (Dock already has one)
+        const topBarElement = this.addTopBar({
+            icon: "iconRSSMain",
+            title: this.i18n.rssReader,
+            position: "right",
+            callback: () => {
+                // Toggle the dock panel visibility when clicking top bar icon
+                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
+                if (dockPanel) {
+                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
+                    if (minBtn) minBtn.click();
+                } else {
+                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
+                    if (dockIconBtn) dockIconBtn.click();
+                }
+            }
+        });
+        
+        // Hide the top bar icon immediately
+        if (topBarElement) {
+            topBarElement.style.display = 'none';
+            topBarElement.style.visibility = 'hidden';
+            topBarElement.style.width = '0';
+            topBarElement.style.height = '0';
+            topBarElement.style.padding = '0';
+            topBarElement.style.margin = '0';
+            topBarElement.style.overflow = 'hidden';
+            
+            // Use MutationObserver to ensure it stays hidden (SiYuan might reset styles)
+            const observer = new MutationObserver(() => {
+                if (topBarElement.style.display !== 'none') {
+                    topBarElement.style.display = 'none';
+                    topBarElement.style.visibility = 'hidden';
+                }
+            });
+            observer.observe(topBarElement, { attributes: true, attributeFilter: ['style'] });
+        }
     }
 
     // Safe setTimeout that tracks all pending timeouts for cleanup
