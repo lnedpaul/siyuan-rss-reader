@@ -307,6 +307,24 @@ export default class RSSReaderPlugin extends Plugin {
             }
         });
 
+        // Add top bar icon - REQUIRED for plugin to appear in Settings panel plugin list
+        this.addTopBar({
+            icon: "iconRSSMain",
+            title: this.i18n.rssReader,
+            position: "right",
+            callback: () => {
+                // Toggle the dock panel visibility when clicking top bar icon
+                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
+                if (dockPanel) {
+                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
+                    if (minBtn) minBtn.click();
+                } else {
+                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
+                    if (dockIconBtn) dockIconBtn.click();
+                }
+            }
+        });
+
         const plugin = this;
         this.addDock({
             type: "rss_reader_dock",

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-05-03
+
+### Added
+- **Top Bar Icon**: Added `addTopBar()` to display plugin icon in SiYuan's top toolbar - REQUIRED for plugin to appear in Settings panel plugin list
+- **Plugin List Display**: Plugin now appears in Settings → Plugins list with icon and name (matching other plugins like Savor Callout, Link Icons, etc.)
+
+### Changed
+- **Plugin Visibility**: Top bar icon enables proper plugin registration in SiYuan's plugin management system
+- **User Experience**: Click top bar icon to toggle RSS Reader Dock panel (same functionality as Dock bottom icon)
+
+---
+
 ## [0.1.4] - 2026-05-03
 
 ### Fixed
