@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-03
+
+### Fixed
+- **Dock Icon Conflict**: Reordered icon registration to ensure `iconRSSMain` is registered first, preventing conflicts with built-in icons
+- **Command Registration**: Changed command langKey from `toggleDock` to `openRssReader` for proper menu display
+- **Dock Toggle Logic**: Fixed dock icon button selector to use `.dock__item[data-type="rss_reader_dock"]` instead of generic selector
+
+### Changed
+- **Icon Registration Order**: Moved `iconRSSMain` symbol definition to the top of SVG registration list to ensure priority
+- **Command Language Key**: Updated command registration to use more descriptive `openRssReader` key
+- **Enhanced Logging**: Added detailed icon registration log showing all 8 registered icons
+
+---
+
 ## [0.1.3] - 2026-05-03
 
 ### Fixed

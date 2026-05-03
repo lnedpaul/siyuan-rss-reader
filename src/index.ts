@@ -172,10 +172,18 @@ export default class RSSReaderPlugin extends Plugin {
      * Icons are embedded directly to avoid webpack loader issues
      */
     private registerCustomIcons() {
-        // SVG icon definitions (simplified paths from Feather Icons)
+        // SVG icon definitions - each symbol must have a unique id
+        // IMPORTANT: Do NOT use ids that conflict with SiYuan built-in icons
         const icons = `
         <svg>
-            <!-- Add Icon (toolbar-add.svg) -->
+            <!-- Main RSS Icon for Dock (PRIMARY ICON - Must be registered first) -->
+            <symbol id="iconRSSMain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 11a9 9 0 0 1 9 9"></path>
+                <path d="M4 4a16 16 0 0 1 16 16"></path>
+                <circle cx="5" cy="19" r="1"></circle>
+            </symbol>
+            
+            <!-- Add Icon -->
             <symbol id="iconRSSAdd" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M16 5H3"></path>
                 <path d="M11 12H3"></path>
@@ -184,7 +192,7 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="M21 12h-6"></path>
             </symbol>
             
-            <!-- Refresh Icon (toolbar-refresh.svg) -->
+            <!-- Refresh Icon -->
             <symbol id="iconRSSRefresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m17 18-1.535 1.605a5 5 0 0 1-8-1.5"></path>
                 <path d="M17 22v-4h-4"></path>
@@ -193,7 +201,7 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="m7 14 1.535-1.605a5 5 0 0 1 8 1.5"></path>
             </symbol>
             
-            <!-- Mark Read Icon (toolbar-mark-read.svg) -->
+            <!-- Mark Read Icon -->
             <symbol id="iconRSSCheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M13 5h8"></path>
                 <path d="M13 12h8"></path>
@@ -202,14 +210,14 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="m3 7 2 2 4-4"></path>
             </symbol>
             
-            <!-- Help Icon (toolbar-help.svg) -->
+            <!-- Help Icon -->
             <symbol id="iconRSSHelp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path>
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                 <path d="M12 17h.01"></path>
             </symbol>
             
-            <!-- Settings Icon (toolbar-settings.svg) -->
+            <!-- Settings Icon -->
             <symbol id="iconRSSSettings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 17H5"></path>
                 <path d="M19 7h-9"></path>
@@ -217,7 +225,7 @@ export default class RSSReaderPlugin extends Plugin {
                 <circle cx="7" cy="7" r="3"></circle>
             </symbol>
             
-            <!-- Save Icon (save-article.svg) -->
+            <!-- Save Icon -->
             <symbol id="iconRSSSave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2v8"></path>
                 <path d="m16 6-4 4-4-4"></path>
@@ -226,7 +234,7 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="M10 18h.01"></path>
             </symbol>
             
-            <!-- Delete Icon (toolbar-delete.svg) -->
+            <!-- Delete Icon -->
             <symbol id="iconRSSDelete" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M16 5H3"></path>
                 <path d="M11 12H3"></path>
@@ -235,14 +243,7 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="m20.5 9.5-5 5"></path>
             </symbol>
             
-            <!-- Main RSS Icon for Dock -->
-            <symbol id="iconRSSMain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 11a9 9 0 0 1 9 9"></path>
-                <path d="M4 4a16 16 0 0 1 16 16"></path>
-                <circle cx="5" cy="19" r="1"></circle>
-            </symbol>
-            
-            <!-- Minimize Icon (toolbar-minimize.svg) -->
+            <!-- Minimize Icon -->
             <symbol id="iconRSSMinimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m14 10 7-7"></path>
                 <path d="M20 10h-6V4"></path>
@@ -251,10 +252,11 @@ export default class RSSReaderPlugin extends Plugin {
             </symbol>
         </svg>`;
         
-        // Register all icons with SiYuan
+        // Register all icons with SiYuan using addIcons()
+        // This must be called before addDock() to ensure icons are available
         this.addIcons(icons);
         
-        logger.log('Custom icons registered successfully');
+        logger.log('Custom icons registered successfully (8 icons): iconRSSMain, iconRSSAdd, iconRSSRefresh, iconRSSCheck, iconRSSHelp, iconRSSSettings, iconRSSSave, iconRSSDelete, iconRSSMinimize');
     }
 
     // ==================== Lifecycle ====================
@@ -284,6 +286,26 @@ export default class RSSReaderPlugin extends Plugin {
 
         // Register custom icons for the plugin
         this.registerCustomIcons();
+
+        // Register command to show plugin menu item in top bar
+        // This enables the plugin to appear in SiYuan's command palette and menu
+        this.addCommand({
+            langKey: "openRssReader",
+            hotkey: "",
+            callback: () => {
+                // Toggle the dock panel visibility
+                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
+                if (dockPanel) {
+                    // Dock is visible, hide it by triggering SiYuan's minimize
+                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
+                    if (minBtn) minBtn.click();
+                } else {
+                    // Dock is not visible, show it by clicking the dock icon button in bottom bar
+                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
+                    if (dockIconBtn) dockIconBtn.click();
+                }
+            }
+        });
 
         const plugin = this;
         this.addDock({
