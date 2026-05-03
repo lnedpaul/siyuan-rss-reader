@@ -19,6 +19,9 @@
     "default": "README.md",
     "zh_CN": "README_zh_CN.md"
   },
+  "funding": {
+    "custom": ["https://github.com/lnedpaul"]
+  },
   "keywords": [
     "RSS",
     "Reader",

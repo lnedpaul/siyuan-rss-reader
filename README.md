@@ -123,6 +123,3 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ---
 
-**Plugin Author**: HM  
-**Version**: 0.1.0  
-**Minimum SiYuan Version**: 3.3.0

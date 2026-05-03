@@ -1,6 +1,8 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const webpack = require('webpack');
+const pluginJson = require('./plugin.json');
 
 module.exports = (env, argv) => {
   const isProd = argv.mode === 'production';
@@ -47,6 +49,19 @@ module.exports = (env, argv) => {
     plugins: [
       new MiniCssExtractPlugin({
         filename: 'index.css',
+      }),
+      new webpack.BannerPlugin({
+        banner: `
+/*! 
+ * ${pluginJson.name} v${pluginJson.version}
+ * ${pluginJson.url}
+ * 
+ * Copyright (c) ${new Date().getFullYear()} ${pluginJson.author}
+ * Licensed under MIT License
+ */
+        `.trim(),
+        raw: true,
+        entryOnly: true,
       }),
       new CopyPlugin({
         patterns: [

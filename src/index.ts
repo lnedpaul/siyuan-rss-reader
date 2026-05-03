@@ -281,15 +281,6 @@ export default class RSSReaderPlugin extends Plugin {
         // Register custom icons for the plugin
         this.registerCustomIcons();
 
-        this.addTopBar({
-            icon: "iconRSS",
-            title: this.i18n.rssReader,
-            position: "right",
-            callback: () => {
-                this.openRSSReader();
-            }
-        });
-
         const plugin = this;
         this.addDock({
             type: "rss_reader_dock",
@@ -558,7 +549,7 @@ private initSidebarUI(container: HTMLElement) {
             <div class="rss-reader-container" style="width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;">
                 <!-- Title bar -->
                 <div id="rssTitleBar" style="flex-shrink:0;display:flex;align-items:center;padding:4px 8px;border-bottom:1px solid var(--b3-border-color);background:var(--b3-theme-surface);min-height:32px;">
-                    <svg style="width:16px;height:16px;flex-shrink:0;margin-right:6px;"><use xlink:href="#iconRSS"></use></svg>
+                    <svg style="width:16px;height:16px;flex-shrink:0;margin-right:6px;"><use xlink:href="#iconRSSMain"></use></svg>
                     <span style="font-size:13px;font-weight:600;color:var(--b3-font-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">RSS Reader</span>
                     <div style="flex:1;"></div>
                     <!-- Settings, Help, Minimize buttons -->
