@@ -146,6 +146,10 @@ export default class RSSReaderPlugin extends Plugin {
     private subscriptionEventsBound: boolean = false;
     // Request lock map to prevent duplicate concurrent requests per subscription (stores raw feed data)
     private pendingRequests: Map<string, Promise<{ items: RSSItem[] }>> = new Map();
+    // Cache expiration time (5 minutes) - avoid unnecessary re-fetches
+    private readonly CACHE_EXPIRY_MS = 5 * 60 * 1000;
+    // Track last background fetch time per subscription to debounce rapid switches
+    private lastBackgroundFetchTime: Map<string, number> = new Map();
     // Performance metrics tracking
     private perfMetrics: {
         fetchCount: number;
@@ -287,7 +291,7 @@ export default class RSSReaderPlugin extends Plugin {
             config: {
                 position: "RightBottom",
                 size: { width: 400, height: 300 },
-                icon: "iconSave",
+                icon: "iconRSSMain",
                 title: this.i18n.rssReader,
             },
             data: {},
@@ -1051,22 +1055,30 @@ private initSidebarUI(container: HTMLElement) {
                 this.renderArticleList(container);
                 this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
                 
-                // Fetch fresh data in background without blocking UI
-                this.fetchAndCacheArticles(sub).then(articles => {
-                    // Only update if user hasn't switched to another subscription
-                    if (this.currentSubscriptionIndex === index) {
-                        this.currentArticles = articles;
-                        this.displayedArticleCount = 0;
-                        if (countEl) {
-                            const unread = articles.filter(a => !a.isRead).length;
-                            countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
+                // Smart background refresh: only fetch if cache is old or user explicitly requests
+                const lastFetch = this.lastBackgroundFetchTime.get(sub.id) || 0;
+                const cacheAge = Date.now() - lastFetch;
+                
+                // Only auto-refresh if cache is older than 5 minutes AND no pending request
+                if (cacheAge > this.CACHE_EXPIRY_MS && !this.pendingRequests.has(sub.id)) {
+                    this.lastBackgroundFetchTime.set(sub.id, Date.now());
+                    
+                    this.fetchAndCacheArticles(sub).then(articles => {
+                        // Only update if user hasn't switched to another subscription
+                        if (this.currentSubscriptionIndex === index) {
+                            this.currentArticles = articles;
+                            this.displayedArticleCount = 0;
+                            if (countEl) {
+                                const unread = articles.filter(a => !a.isRead).length;
+                                countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
+                            }
+                            this.renderArticleList(container);
+                            this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
                         }
-                        this.renderArticleList(container);
-                        this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
-                    }
-                }).catch(err => {
-                    logger.warn("Background fetch failed:", err);
-                });
+                    }).catch(err => {
+                        logger.warn("Background fetch failed:", err);
+                    });
+                }
             } else {
                 // No cache, fetch fresh data
                 const articles = await this.fetchAndCacheArticles(sub);
@@ -1320,9 +1332,16 @@ private initSidebarUI(container: HTMLElement) {
             // Remove only the loading indicator, keep existing articles
             const loadingEl = el.querySelector(".loading-more");
             if (loadingEl) loadingEl.remove();
-            // Append new article items before the (now removed) loading indicator
-            el.insertAdjacentHTML("beforeend", html);
+            // Use DocumentFragment for better performance when appending
+            const fragment = document.createDocumentFragment();
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+            while (tempDiv.firstChild) {
+                fragment.appendChild(tempDiv.firstChild);
+            }
+            el.appendChild(fragment);
         } else {
+            // For full re-render, use innerHTML (simpler and fast enough for initial load)
             el.innerHTML = html;
         }
 
@@ -1727,18 +1746,18 @@ private initSidebarUI(container: HTMLElement) {
     private async fetchAndCacheArticles(sub: Subscription): Promise<Article[]> {
         const feed = await this.fetchWithRetry(sub, 3);
         const cached = await this.getCachedArticles(sub.id);
-
+    
         const newArticles = feed.items.map(item => {
             // Extract thumbnail once during loading, cache it in article object
             let thumbnailUrl = '';
             const contentToSearch = item.content || item.description || '';
             if (contentToSearch) {
-                const imgMatch = contentToSearch.match(/<img[^>]+src=["']([^"']+)["']/i);
+                const imgMatch = contentToSearch.match(/<img[^>]+src=["']([^'"]+)["']/i);
                 if (imgMatch) {
                     thumbnailUrl = imgMatch[1];
                 }
             }
-            
+                
             return {
                 ...item,
                 id: this.generateArticleId(item.link),
@@ -1748,9 +1767,13 @@ private initSidebarUI(container: HTMLElement) {
                 thumbnail: thumbnailUrl || undefined // Only set if found
             } as Article;
         });
-
+    
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
+            
+        // Update last background fetch time
+        this.lastBackgroundFetchTime.set(sub.id, Date.now());
+            
         return merged;
     }
 

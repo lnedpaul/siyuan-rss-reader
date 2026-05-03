@@ -52,31 +52,40 @@
 ### 3.1 订阅源 (Subscription)
 ```typescript
 interface Subscription {
+    id: string;           // 唯一标识符
     url: string;          // RSS 源地址
     name: string;         // 用户自定义名称
-    lastSync?: number;    // 上次同步时间戳
+    lastFetchTime?: number; // 上次抓取时间戳
 }
 ```
 
 ### 3.2 文章 (Article)
 ```typescript
-interface Article {
-    title: string;        // 文章标题
-    link: string;         // 原文链接
-    pubDate?: string;     // 发布日期
-    content: string;      // HTML 内容
-    description?: string; // 摘要
-    author?: string;      // 作者
+interface Article extends RSSItem {
+    id: string;              // 文章唯一ID（基于 link + subscriptionId）
+    subscriptionId: string;  // 所属订阅源ID
+    title: string;           // 文章标题
+    link: string;            // 原文链接
+    pubDate: string;         // 发布日期
+    content: string;         // HTML 内容
+    description: string;     // 摘要
+    isRead?: boolean;        // 是否已读
+    cachedAt?: number;       // 缓存时间戳
+    thumbnail?: string;      // 缩略图URL（缓存提取结果）
 }
 ```
 
 ### 3.3 插件设置 (Settings)
 ```typescript
 interface Settings {
-    articlesPerPage: number;      // 每页条目数 (默认: 20)
-    fontSize: 'small' | 'medium' | 'large';  // 字体大小
-    autoRefreshInterval: number;  // 自动刷新间隔 (分钟)
-    enableKeyboardShortcuts: boolean;  // 启用快捷键
+    articlesPerPage: number;        // 每页条目数 (默认: 20)
+    autoMarkRead: boolean;          // 自动标记已读 (默认: true)
+    layout: 'horizontal' | 'vertical'; // 布局模式 (默认: vertical)
+    enableKeyboardShortcuts: boolean;  // 启用快捷键 (默认: true)
+    showUnreadOnly: boolean;        // 仅显示未读 (默认: false)
+    fontSize: number;               // 字体大小 12-20px (默认: 14)
+    autoRefreshInterval: number;    // 自动刷新间隔 (分钟, 0=禁用)
+    lastUsedNotebookId?: string;    // 上次使用的笔记本ID
 }
 ```
 
@@ -125,16 +134,21 @@ interface Settings {
 ### 5.1 Dock 面板结构
 ```
 ┌──────────────────────────────────────────────────────┐
-│ 📡 RSS Reader      [+] [↻] [✓] [⚙] [?] [—]         │  ← 标题栏 (自建)
+│ 📡 RSS Reader                  [⚙] [?] [—]          │  ← 自建标题栏
 ├──────────┬───────────────────────────────────────────┤
-│          │  文章列表 (可滚动)                        │
+│          │  工具栏 [+] [↻] [✓]                       │  ← 订阅列表顶部
 │ 订阅列表  ├───────────────────────────────────────────┤
-│ (20%)    │  文章内容 (HTML 渲染)                     │
-│          │                                           │
-│          │                                           │
+│ (20%)    │  文章列表 (可滚动，无限加载)               │
+│          ├───────────────────────────────────────────┤
+│          │  文章内容 (HTML 渲染)                     │
 └──────────┴───────────────────────────────────────────┘
      ↑              ↑
      └──────────────┴── 可拖拽分隔符
+
+注：
+- 标题栏为插件自建，包含 Logo、标题和窗口控制按钮
+- 工具栏按钮根据上下文动态显示（订阅列表/文章列表）
+- 侧边栏宽度固定为 Dock 的 20%
 ```
 
 ### 5.2 响应式布局
@@ -153,7 +167,7 @@ interface Settings {
 ### 6.2 新增翻译步骤
 1. 在 `src/i18n/zh_CN.json` 添加键值对
 2. 在 `src/i18n/en_US.json` 添加对应英文翻译
-3. 重新构建：`pnpm run build`
+3. 重新构建：`npm run build`
 
 ## 7. 深色模式
 
@@ -193,5 +207,10 @@ observer.observe(document.body, { attributes: true, attributeFilter: ['data-them
 
 ---
 
-**文档版本**：0.1.0  
-**最后更新**：2026-04-24
+**文档版本**：0.1.1  
+**最后更新**：2026-05-03  
+**更新说明**：
+- 修正数据模型定义，与实际代码保持一致
+- 更新 UI 布局描述，反映自建标题栏架构
+- 修正构建命令为 npm
+- 补充 Settings 接口完整字段
