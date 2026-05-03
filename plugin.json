@@ -2,11 +2,12 @@
   "name": "siyuan-rss-reader",
   "author": "HM",
   "url": "https://github.com/lnedpaul/siyuan-rss-reader",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "minAppVersion": "3.3.0",
   "backends": ["all"],
   "frontends": ["all"],
   "disabledInPublish": false,
+  "icon": "icon.png",
   "displayName": {
     "default": "RSS Reader",
     "zh_CN": "RSS 订阅"

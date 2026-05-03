@@ -622,7 +622,7 @@ private initSidebarUI(container: HTMLElement) {
                 </button>
             </div>`;
             html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
-                <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:28px;height:28px;"><use xlink:href="#iconRss"></use></svg></div>
+                <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:28px;height:28px;"><use xlink:href="#iconRSSMain"></use></svg></div>
                 <div>${this.i18n.noSubscriptions}</div>
                 <div style="margin-top:4px;font-size:11px;">${this.i18n.addFirst}</div>
             </div>`;
@@ -825,7 +825,7 @@ private initSidebarUI(container: HTMLElement) {
             titleSection.style.cssText = 'align-items:center; flex-shrink:0; padding:0 8px;';
             titleSection.innerHTML = `
                 <svg class="block__logoicon" style="width:16px;height:16px;margin-right:6px;">
-                    <use xlink:href="#iconRss"></use>
+                    <use xlink:href="#iconRSSMain"></use>
                 </svg>
                 <span class="block__text">RSS Reader</span>
             `;
