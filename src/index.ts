@@ -2416,9 +2416,14 @@ ${escaped}
     }
 
     private showHelpDialog() {
+        // Prevent multiple dialogs from opening
+        if (document.querySelector('.b3-dialog:has(.rss-help-dialog)')) {
+            return;
+        }
+        
         const dialog = new Dialog({
             title: `?? ${this.i18n.helpTitle}`,
-            content: `<div class="b3-dialog__content" style="padding:16px;font-size:13px;">
+            content: `<div class="b3-dialog__content rss-help-dialog" style="padding:16px;font-size:13px;">
                 <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;">
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">J/K</kbd></div><div>${this.i18n.helpPrevNext}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">O</kbd></div><div>${this.i18n.helpOpenOriginal}</div>
@@ -2429,11 +2434,23 @@ ${escaped}
                 </div>
             </div>
             <div class="b3-dialog__action">
-                <button class="b3-button b3-button--text" onclick="this.closest('.b3-dialog').remove()">OK</button>
+                <button class="b3-button b3-button--text" id="helpDialogClose">OK</button>
             </div>`,
             width: "360px",
         });
-        requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
+        
+        // Add close button handler
+        requestAnimationFrame(() => {
+            if (dialog.element) {
+                dialog.element.style.zIndex = "9999";
+                const closeBtn = dialog.element.querySelector('#helpDialogClose');
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', () => {
+                        dialog.destroy();
+                    });
+                }
+            }
+        });
     }
 
     private showSettingsDialog(container: HTMLElement) {
