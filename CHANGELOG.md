@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-05-05
+
+### Fixed
+- **Help Dialog Duplicate Issue**: Fixed critical bug where help dialog appeared multiple times (3 overlapping dialogs)
+- **Dialog Close Button**: Simplified close button logic using `destroyCallback` instead of MutationObserver
+- **Encoding Issue**: Fixed `??` emoji rendering issue in dialog title
+- **Race Condition**: Added synchronous flag check to prevent multiple dialog instances
+
+### Changed
+- **Version Bump**: Updated to v0.1.11 after fixing help dialog duplication issue
+- **Code Cleanup**: Removed complex MutationObserver logic for dialog tracking
+
+---
+
 ## [0.1.10] - 2026-05-03
 
 ### Fixed
@@ -15,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Data Cleanup**: Added `uninstall()` method to remove all plugin data when uninstalled from marketplace
 - **Keyboard Shortcuts**: Removed non-functional search shortcuts (`/` and `Esc`) since search feature was removed
 - **Help Dialog**: Updated keyboard shortcuts help to remove search-related entries
+- **Duplicate Help Dialogs**: Fixed issue where pressing '?' could open multiple overlapping help dialogs
+- **Dialog Close Button**: Fixed close button to properly destroy dialog with single click
 
 ### Changed
 - **MutationObserver Management**: Stored observer references as class properties for proper cleanup

@@ -163,6 +163,8 @@ export default class RSSReaderPlugin extends Plugin {
     // MutationObserver instances for cleanup
     private topBarObserver: MutationObserver | null = null;
     private themeObserver: MutationObserver | null = null;
+    // Track if help dialog is currently open to prevent duplicates
+    private isHelpDialogOpen: boolean = false;
 
     // ==================== Icon Registration ====================
 
@@ -2416,13 +2418,16 @@ ${escaped}
     }
 
     private showHelpDialog() {
-        // Prevent multiple dialogs from opening
-        if (document.querySelector('.b3-dialog:has(.rss-help-dialog)')) {
+        // IMMEDIATE check to prevent race condition
+        if (this.isHelpDialogOpen) {
             return;
         }
+        // Set flag SYNCHRONOUSLY before any async operations
+        this.isHelpDialogOpen = true;
+        console.log('[RSS] Opening help dialog');
         
         const dialog = new Dialog({
-            title: `?? ${this.i18n.helpTitle}`,
+            title: `${this.i18n.helpTitle}`,
             content: `<div class="b3-dialog__content rss-help-dialog" style="padding:16px;font-size:13px;">
                 <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;">
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">J/K</kbd></div><div>${this.i18n.helpPrevNext}</div>
@@ -2437,9 +2442,14 @@ ${escaped}
                 <button class="b3-button b3-button--text" id="helpDialogClose">OK</button>
             </div>`,
             width: "360px",
+            destroyCallback: () => {
+                // Reset flag when dialog is closed by any means
+                this.isHelpDialogOpen = false;
+                console.log('[RSS] Help dialog closed');
+            }
         });
         
-        // Add close button handler
+        // Set z-index and add close button handler
         requestAnimationFrame(() => {
             if (dialog.element) {
                 dialog.element.style.zIndex = "9999";
