@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-05-03
+
+### Fixed
+- **Keywords Compliance**: Removed "SiYuan" brand name from keywords per marketplace guidelines
+- **README Links**: Converted all relative links to absolute URLs for proper rendering in marketplace
+- **Lifecycle Method**: Renamed `ondestroy()` to `onunload()` (correct SiYuan API method name)
+- **Memory Leak**: Added proper cleanup for two MutationObserver instances in `onunload()`
+- **Data Cleanup**: Added `uninstall()` method to remove all plugin data when uninstalled from marketplace
+
+### Changed
+- **MutationObserver Management**: Stored observer references as class properties for proper cleanup
+- **Plugin Uninstall**: Users can now completely remove plugin data by uninstalling from marketplace
+
+---
+
 ## [0.1.9] - 2026-05-03
 
 ### Removed

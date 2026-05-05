@@ -164,6 +164,9 @@ export default class RSSReaderPlugin extends Plugin {
         renderCount: 0,
         totalRenderTime: 0
     };
+    // MutationObserver instances for cleanup
+    private topBarObserver: MutationObserver | null = null;
+    private themeObserver: MutationObserver | null = null;
 
     // ==================== Icon Registration ====================
 
@@ -365,13 +368,13 @@ export default class RSSReaderPlugin extends Plugin {
             topBarElement.style.overflow = 'hidden';
             
             // Use MutationObserver to ensure it stays hidden (SiYuan might reset styles)
-            const observer = new MutationObserver(() => {
+            this.topBarObserver = new MutationObserver(() => {
                 if (topBarElement.style.display !== 'none') {
                     topBarElement.style.display = 'none';
                     topBarElement.style.visibility = 'hidden';
                 }
             });
-            observer.observe(topBarElement, { attributes: true, attributeFilter: ['style'] });
+            this.topBarObserver.observe(topBarElement, { attributes: true, attributeFilter: ['style'] });
         }
     }
 
@@ -392,7 +395,7 @@ export default class RSSReaderPlugin extends Plugin {
         this.pendingTimeouts = [];
     }
 
-    ondestroy() {
+    onunload() {
         // Clear all intervals
         if (this.updateInterval) {
             clearInterval(this.updateInterval);
@@ -410,6 +413,16 @@ export default class RSSReaderPlugin extends Plugin {
         
         // Cancel all pending network requests
         this.pendingRequests.clear();
+        
+        // Disconnect MutationObservers to prevent memory leaks
+        if (this.topBarObserver) {
+            this.topBarObserver.disconnect();
+            this.topBarObserver = null;
+        }
+        if (this.themeObserver) {
+            this.themeObserver.disconnect();
+            this.themeObserver = null;
+        }
         
         // Log performance metrics in debug mode
         if (DEBUG) {
@@ -440,6 +453,22 @@ export default class RSSReaderPlugin extends Plugin {
                 articleList.removeEventListener("scroll", this.listScrollHandler);
             }
         }
+    }
+
+    /**
+     * Called when plugin is completely uninstalled from marketplace
+     * Clean up all saved data to prevent残留
+     */
+    async uninstall() {
+        logger.log("Uninstalling RSS Reader plugin, cleaning up data...");
+        
+        // Remove all plugin data (subscriptions, read status, cached articles, settings)
+        await this.removeData(STORAGE_NAME);      // rss_subscriptions
+        await this.removeData(READ_STATUS_NAME);  // rss_read_status
+        await this.removeData(CACHED_ARTICLES_NAME); // rss_cached_articles
+        await this.removeData(SETTINGS_NAME);     // rss_settings
+        
+        logger.log("RSS Reader plugin data cleaned up successfully");
     }
 
     private async loadSettings() {
@@ -1458,7 +1487,7 @@ private initSidebarUI(container: HTMLElement) {
 
     // Fix #4: Watch SiYuan theme changes
     private watchThemeChanges(container: HTMLElement) {
-        const observer = new MutationObserver((mutations) => {
+        this.themeObserver = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
                 if (mutation.type === "attributes" && mutation.attributeName === "data-theme") {
                     const theme = document.body.getAttribute("data-theme");
@@ -1467,7 +1496,7 @@ private initSidebarUI(container: HTMLElement) {
                 }
             }
         });
-        observer.observe(document.body, { attributes: true, attributeFilter: ["data-theme"] });
+        this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ["data-theme"] });
     }
 
     // Fix #5: Check if article list is full and auto-load more

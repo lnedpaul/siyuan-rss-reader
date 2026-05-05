@@ -102,7 +102,7 @@ Access plugin settings via the ⚙️ button in the toolbar:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+Contributions are welcome! Please see [CONTRIBUTING.md](https://github.com/lnedpaul/siyuan-rss-reader/blob/main/CONTRIBUTING.md) for guidelines.
 
 ### Development Setup
 1. Fork the repository
@@ -114,7 +114,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for g
 
 ## 📄 License
 
-This project is licensed under the [MIT License](./LICENSE).
+This project is licensed under the [MIT License](https://github.com/lnedpaul/siyuan-rss-reader/blob/main/LICENSE).
 
 ## 🙏 Acknowledgments
 

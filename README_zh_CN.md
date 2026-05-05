@@ -102,7 +102,7 @@ siyuan-rss-reader/
 
 ## 🤝 参与贡献
 
-欢迎参与贡献！请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解详情。
+欢迎参与贡献！请参阅 [CONTRIBUTING.md](https://github.com/lnedpaul/siyuan-rss-reader/blob/main/CONTRIBUTING.md) 了解详情。
 
 ### 开发流程
 1. Fork 本仓库
@@ -114,7 +114,7 @@ siyuan-rss-reader/
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](./LICENSE)。
+本项目采用 [MIT 许可证](https://github.com/lnedpaul/siyuan-rss-reader/blob/main/LICENSE)。
 
 ## 🙏 致谢
 
