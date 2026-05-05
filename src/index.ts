@@ -110,8 +110,6 @@ const SHORTCUTS = {
     SAVE_TO_SIYUAN: 's',
     REFRESH: 'r',
     MARK_ALL_READ: 'a',
-    SEARCH: '/',
-    ESCAPE: 'Escape',
     HELP: '?'
 };
 
@@ -123,8 +121,6 @@ export default class RSSReaderPlugin extends Plugin {
     private currentArticles: Article[] = [];
     private readStatus: ReadStatus = {};
     private currentArticleIndex: number = -1;
-    private searchQuery: string = "";
-    private isSearchMode: boolean = false;
     private container: HTMLElement | null = null;
     private updateInterval: NodeJS.Timeout | null = null;
     private boundHandleKeyboard!: (e: KeyboardEvent) => void;
@@ -523,13 +519,10 @@ export default class RSSReaderPlugin extends Plugin {
 
     private handleKeyboard(e: KeyboardEvent) {
         if (!this.container || !this.settings.enableKeyboardShortcuts) return;
+        // Ignore keyboard shortcuts when typing in input/textarea/select
         if ((e.target as HTMLElement).tagName === 'INPUT' ||
             (e.target as HTMLElement).tagName === 'TEXTAREA' ||
             (e.target as HTMLElement).tagName === 'SELECT') {
-            if (e.key === SHORTCUTS.ESCAPE) {
-                (e.target as HTMLElement).blur();
-                this.exitSearchMode();
-            }
             return;
         }
 
@@ -540,9 +533,7 @@ export default class RSSReaderPlugin extends Plugin {
             case SHORTCUTS.SAVE_TO_SIYUAN: e.preventDefault(); this.saveCurrentArticle(); break;
             case SHORTCUTS.REFRESH: e.preventDefault(); if (this.container) this.refreshCurrentFeed(this.container); break;
             case SHORTCUTS.MARK_ALL_READ: e.preventDefault(); if (this.container) this.markAllRead(this.container); break;
-            case SHORTCUTS.SEARCH: e.preventDefault(); this.focusSearchInput(); break;
             case SHORTCUTS.HELP: e.preventDefault(); this.showHelpDialog(); break;
-            case SHORTCUTS.ESCAPE: this.exitSearchMode(); break;
         }
     }
 
@@ -588,25 +579,6 @@ export default class RSSReaderPlugin extends Plugin {
         if (this.currentArticleIndex < 0) return;
         const article = this.currentArticles[this.currentArticleIndex];
         if (article) this.saveArticleToSiYuan(article);
-    }
-
-    private focusSearchInput() {
-        if (!this.container) return;
-        const input = this.container.querySelector("#searchInput") as HTMLInputElement;
-        if (input) { input.focus(); this.isSearchMode = true; }
-    }
-
-    private exitSearchMode() {
-        if (!this.isSearchMode) return;
-        this.isSearchMode = false;
-        this.searchQuery = "";
-        if (this.container) {
-            const input = this.container.querySelector("#searchInput") as HTMLInputElement;
-            if (input) { input.value = ""; input.blur(); }
-            if (this.currentSubscriptionIndex >= 0) {
-                this.selectSubscription(this.currentSubscriptionIndex, this.container);
-            }
-        }
     }
 
     // ==================== UI ====================
@@ -1103,7 +1075,6 @@ private initSidebarUI(container: HTMLElement) {
         this.displayedArticleCount = 0;
         this.currentArticles = [];
         this.currentArticleIndex = -1; // ����ѡ����������
-        this.isSearchMode = false;
         this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
 
         // Clear article content window when switching subscriptions
@@ -1413,7 +1384,7 @@ private initSidebarUI(container: HTMLElement) {
                     <!-- ��������� -->
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:${fs.listItem};font-weight:${fontWeight};color:${textColor};line-height:1.4;margin-bottom:4px;">
-                            ${this.highlightSearchTerm(article.title)}
+                            ${article.title}
                         </div>
                         <div style="font-size:${fs.listDate};color:var(--b3-font-color-quaternary);">
                             ${article.pubDate ? this.formatDate(article.pubDate) : ''}
@@ -1467,8 +1438,8 @@ private initSidebarUI(container: HTMLElement) {
         }
 
         this.listScrollHandler = () => {
-            // Skip during search mode, when already loading, or no more articles
-            if (this.isSearchMode || this.isLoadingMore) return;
+            // Skip when already loading or no more articles
+            if (this.isLoadingMore) return;
             if (this.currentArticles.length === 0) return;
 
             const { scrollTop, scrollHeight, clientHeight } = articleList;
@@ -1966,58 +1937,6 @@ private initSidebarUI(container: HTMLElement) {
         }
     }
 
-    // ==================== Search ====================
-
-    private async handleSearch(query: string, container: HTMLElement) {
-        this.searchQuery = query.trim().toLowerCase();
-        if (!this.searchQuery) {
-            if (this.currentSubscriptionIndex >= 0)
-                this.selectSubscription(this.currentSubscriptionIndex, container);
-            return;
-        }
-
-        this.isSearchMode = true;
-        const all: Article[] = [];
-        const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-        Object.values(cached).forEach(articles => all.push(...articles));
-
-        const results = all.filter(a =>
-            a.title.toLowerCase().includes(this.searchQuery) ||
-            (a.content || a.description).toLowerCase().includes(this.searchQuery)
-        ).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-
-        this.currentArticles = results.slice(0, 50);
-        this.currentArticleIndex = -1;
-
-        const countEl = container.querySelector("#articleCount") as HTMLElement;
-        if (countEl) countEl.textContent = `?? ${results.length}`;
-
-        if (results.length === 0) {
-            (container.querySelector("#rssArticleList") as HTMLElement).innerHTML =
-                `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">?? ${this.i18n.noResults}</div>`;
-            return;
-        }
-
-        this.renderArticleList(container, false);
-    }
-
-    private highlightSearchTerm(text: string): string {
-        if (!this.searchQuery) return this.escapeHtml(text);
-        const escapedText = this.escapeHtml(text);
-        const regex = new RegExp(`(${this.escapeRegex(this.searchQuery)})`, 'gi');
-        return escapedText.replace(regex, '<mark style="background:var(--b3-theme-primary-light);color:var(--b3-theme-primary);padding:0 2px;border-radius:2px;">$1</mark>');
-    }
-
-    private escapeHtml(text: string): string {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    private escapeRegex(s: string): string {
-        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
     private getSubscriptionName(subId: string): string {
         return this.subscriptions.find(s => s.id === subId)?.name || subId;
     }
@@ -2506,8 +2425,6 @@ ${escaped}
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">S</kbd></div><div>${this.i18n.helpSaveToSiYuan}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">R</kbd></div><div>${this.i18n.helpRefreshFeed}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">A</kbd></div><div>${this.i18n.helpMarkAllRead}</div>
-                    <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">/</kbd></div><div>${this.i18n.helpFocusSearch}</div>
-                    <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">Esc</kbd></div><div>${this.i18n.helpExitSearch}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">?</kbd></div><div>${this.i18n.helpShowHelp}</div>
                 </div>
             </div>

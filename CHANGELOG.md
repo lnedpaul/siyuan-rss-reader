@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lifecycle Method**: Renamed `ondestroy()` to `onunload()` (correct SiYuan API method name)
 - **Memory Leak**: Added proper cleanup for two MutationObserver instances in `onunload()`
 - **Data Cleanup**: Added `uninstall()` method to remove all plugin data when uninstalled from marketplace
+- **Keyboard Shortcuts**: Removed non-functional search shortcuts (`/` and `Esc`) since search feature was removed
+- **Help Dialog**: Updated keyboard shortcuts help to remove search-related entries
 
 ### Changed
 - **MutationObserver Management**: Stored observer references as class properties for proper cleanup
 - **Plugin Uninstall**: Users can now completely remove plugin data by uninstalling from marketplace
+- **Code Cleanup**: Removed unused search-related code (`focusSearchInput`, `exitSearchMode`, `handleSearch`, etc.)
 
 ---
 
