@@ -161,7 +161,6 @@ export default class RSSReaderPlugin extends Plugin {
         totalRenderTime: 0
     };
     // MutationObserver instances for cleanup
-    private topBarObserver: MutationObserver | null = null;
     private themeObserver: MutationObserver | null = null;
     // Track if help dialog is currently open to prevent duplicates
     private isHelpDialogOpen: boolean = false;
@@ -334,48 +333,6 @@ export default class RSSReaderPlugin extends Plugin {
         this.registerKeyboardShortcuts();
     }
 
-    // SiYuan 3.3+: addTopBar() must be called in onLayoutReady(), not onload()
-    onLayoutReady() {
-        // Add top bar icon - REQUIRED for plugin to appear in Settings → Plugins management list
-        // We'll hide this icon to avoid duplicate icons (Dock already has one)
-        const topBarElement = this.addTopBar({
-            icon: "iconRSSMain",
-            title: this.i18n.rssReader,
-            position: "right",
-            callback: () => {
-                // Toggle the dock panel visibility when clicking top bar icon
-                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
-                if (dockPanel) {
-                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
-                    if (minBtn) minBtn.click();
-                } else {
-                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
-                    if (dockIconBtn) dockIconBtn.click();
-                }
-            }
-        });
-        
-        // Hide the top bar icon immediately
-        if (topBarElement) {
-            topBarElement.style.display = 'none';
-            topBarElement.style.visibility = 'hidden';
-            topBarElement.style.width = '0';
-            topBarElement.style.height = '0';
-            topBarElement.style.padding = '0';
-            topBarElement.style.margin = '0';
-            topBarElement.style.overflow = 'hidden';
-            
-            // Use MutationObserver to ensure it stays hidden (SiYuan might reset styles)
-            this.topBarObserver = new MutationObserver(() => {
-                if (topBarElement.style.display !== 'none') {
-                    topBarElement.style.display = 'none';
-                    topBarElement.style.visibility = 'hidden';
-                }
-            });
-            this.topBarObserver.observe(topBarElement, { attributes: true, attributeFilter: ['style'] });
-        }
-    }
-
     // Safe setTimeout that tracks all pending timeouts for cleanup
     private safeSetTimeout(fn: () => void, delay: number): NodeJS.Timeout {
         const timeout = setTimeout(() => {
@@ -413,10 +370,6 @@ export default class RSSReaderPlugin extends Plugin {
         this.pendingRequests.clear();
         
         // Disconnect MutationObservers to prevent memory leaks
-        if (this.topBarObserver) {
-            this.topBarObserver.disconnect();
-            this.topBarObserver = null;
-        }
         if (this.themeObserver) {
             this.themeObserver.disconnect();
             this.themeObserver = null;
@@ -2424,7 +2377,7 @@ ${escaped}
         }
         // Set flag SYNCHRONOUSLY before any async operations
         this.isHelpDialogOpen = true;
-        console.log('[RSS] Opening help dialog');
+        logger.log('Opening help dialog');
         
         const dialog = new Dialog({
             title: `${this.i18n.helpTitle}`,
@@ -2445,7 +2398,7 @@ ${escaped}
             destroyCallback: () => {
                 // Reset flag when dialog is closed by any means
                 this.isHelpDialogOpen = false;
-                console.log('[RSS] Help dialog closed');
+                logger.log('Help dialog closed');
             }
         });
         

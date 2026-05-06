@@ -23,14 +23,11 @@ A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyu
 ### Keyboard Shortcuts
 | Key | Action |
 |-----|--------|
-| `↑/↓` | Navigate articles |
-| `Enter` | Open selected article |
+| `J/K` | Previous/Next article |
 | `O` | Open original link |
 | `S` | Save to SiYuan |
 | `R` | Refresh current feed |
-| `M` | Mark all as read |
-| `F` | Focus search |
-| `Escape` | Exit search |
+| `A` | Mark all as read |
 | `?` | Show help |
 
 ## 🚀 Installation
