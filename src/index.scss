@@ -170,22 +170,6 @@ body.b3-theme-dark,
         color: var(--b3-font-color-quaternary);
     }
 
-    // 搜索框深色模式
-    #searchInput {
-        background-color: var(--b3-theme-background);
-        border-color: var(--b3-border-color);
-        color: var(--b3-font-color);
-
-        &::placeholder {
-            color: var(--b3-font-color-quaternary);
-        }
-
-        &:focus {
-            border-color: var(--b3-theme-primary);
-            box-shadow: 0 0 0 2px var(--b3-theme-primary-light);
-        }
-    }
-
     // 分类标签深色模式
     .rss-category-filter-btn {
         &.active {
@@ -229,17 +213,6 @@ body.b3-theme-dark,
 
         pre, code {
             background-color: var(--b3-theme-surface-lighter);
-        }
-    }
-
-    #searchInput {
-        background-color: var(--b3-theme-background);
-        border-color: var(--b3-border-color);
-        color: var(--b3-font-color);
-
-        &:focus {
-            border-color: var(--b3-theme-primary);
-            box-shadow: 0 0 0 2px var(--b3-theme-primary-light);
         }
     }
 }

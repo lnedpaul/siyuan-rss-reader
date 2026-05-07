@@ -1,4 +1,4 @@
-﻿import {
+import {
     Plugin,
     showMessage,
     Dialog,
@@ -461,7 +461,7 @@ export default class RSSReaderPlugin extends Plugin {
             await this.saveData(SETTINGS_NAME, this.settings);
         } catch (error) {
             logger.error("Failed to save settings:", error);
-            showMessage(this.i18n.saveFailed || "��������ʧ��", 3000);
+            showMessage(this.i18n.saveFailed || "Save failed", 3000);
         }
     }
 
@@ -701,17 +701,17 @@ private initSidebarUI(container: HTMLElement) {
             if (btn) {
                 const button = btn as HTMLElement;
                 if (button.classList.contains('delete-rss')) {
-                    // ɾ����ť - ��ɫ����
+                    // Delete button - red style
                     button.style.background = 'var(--b3-theme-error-light)';
                     button.style.borderColor = 'var(--b3-theme-error)';
                     button.style.color = 'var(--b3-theme-error)';
                 } else if (button.classList.contains('refresh-rss')) {
-                    // ˢ�°�ť - ��ɫ
+                    // Refresh button - green style
                     button.style.background = 'rgba(16, 185, 129, 0.15)';
                     button.style.borderColor = 'rgb(16, 185, 129)';
                     button.style.color = 'rgb(16, 185, 129)';
                 } else if (button.classList.contains('mark-read-rss')) {
-                    // ����Ѷ���ť - ��ɫ
+                    // Mark read button - blue style
                     button.style.background = 'rgba(59, 130, 246, 0.15)';
                     button.style.borderColor = 'rgb(59, 130, 246)';
                     button.style.color = 'rgb(59, 130, 246)';
@@ -1029,7 +1029,7 @@ private initSidebarUI(container: HTMLElement) {
         this.currentSubscriptionIndex = index;
         this.displayedArticleCount = 0;
         this.currentArticles = [];
-        this.currentArticleIndex = -1; // ����ѡ����������
+        this.currentArticleIndex = -1; // Clear selected article index
         this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
 
         // Clear article content window when switching subscriptions
@@ -1179,7 +1179,7 @@ private initSidebarUI(container: HTMLElement) {
             await this.saveData(STORAGE_NAME, this.subscriptions);
         } catch (error) {
             logger.error("Failed to save subscriptions after delete:", error);
-            showMessage(this.i18n.saveFailed || "����ʧ��", 3000);
+            showMessage(this.i18n.saveFailed || "Save failed", 3000);
         }
 
         if (this.currentSubscriptionIndex === index) {
@@ -1315,11 +1315,11 @@ private initSidebarUI(container: HTMLElement) {
             const isSelected = this.currentArticleIndex === gi;
             const isUnread = !article.isRead;
             
-            // ������ʽ
-            // ѡ�����ȣ�ѡ��=ǳ��ɫ+�Ӵ֣�δ��=Ĭ��ɫ+�Ӵ�+ɫ�����Ѷ�=ǳ��ɫ+����
+            // Text styles
+            // Selection style: selected=dark gray+bold, unread=default color+bold+primary bar, read=dark gray+normal
             const fontWeight = isSelected ? 'bold' : (isUnread ? 'bold' : 'normal');
             const textColor = isSelected ? '#888888' : (isUnread ? 'var(--b3-font-color)' : '#888888');
-            // δ����δѡ�У���ʾɫ��
+            // Show primary color bar for unread and unselected items
             const showUnreadBar = isUnread && !isSelected;
             
             // Use cached thumbnail URL (extracted once during loading)
@@ -1330,13 +1330,13 @@ private initSidebarUI(container: HTMLElement) {
                     data-index="${gi}"
                     style="padding:12px 14px;border-bottom:1px solid var(--b3-border-color);cursor:pointer;display:flex;align-items:flex-start;gap:10px;">
                     
-                    <!-- δ��ɫ��ռλ - ����״̬������3px�ռ䱣֤���� -->
+                    <!-- Unread color bar placeholder - status indicator uses 3px space to ensure layout -->
                     <span style="width:3px;height:100%;min-height:20px;flex-shrink:0;${showUnreadBar ? 'background:var(--b3-theme-primary);' : 'background:transparent;'}border-radius:2px;align-self:stretch;margin-top:auto;margin-bottom:auto;"></span>
                     
-                    <!-- ����ͼ������У� -->
+                    <!-- Thumbnail image container -->
                     ${thumbnailUrl ? `<img src="${thumbnailUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
                     
-                    <!-- ��������� -->
+                    <!-- Article content area -->
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:${fs.listItem};font-weight:${fontWeight};color:${textColor};line-height:1.4;margin-bottom:4px;">
                             ${article.title}
@@ -1367,7 +1367,7 @@ private initSidebarUI(container: HTMLElement) {
 
         if (hasMore) {
             el.insertAdjacentHTML("beforeend", `<div class="loading-more" style="padding:12px;text-align:center;color:var(--b3-font-color-quaternary);font-size:12px;">
-                �� ${this.i18n.loadMore} (${this.currentArticles.length - end})
+                ↓ ${this.i18n.loadMore} (${this.currentArticles.length - end})
             </div>`);
         }
 
@@ -1564,7 +1564,8 @@ private initSidebarUI(container: HTMLElement) {
                     <div style="font-size:${fontSize.meta};color:var(--b3-font-color-quaternary);display:flex;gap:10px;align-items:center;">
                         <span>${article.pubDate ? this.formatDate(article.pubDate) : ''}</span>
                         <a href="${article.link}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
-                            ${this.i18n.originalLink} �J                        </a>
+                            ${this.i18n.originalLink}
+                        </a>
                     </div>
                 </div>
                 <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
@@ -1731,16 +1732,16 @@ private initSidebarUI(container: HTMLElement) {
         const el = parent.querySelector(selector);
         if (!el) return "";
 
-        // ���ȳ��� innerHTML
+        // First try innerHTML
         let html = el.innerHTML || "";
 
-        // innerHTML Ϊ��ʱ��textContent ���ܰ���ʵ�����ݣ���CDATA���ı���
+        // When innerHTML is empty, textContent may contain actual content like CDATA sections
         const textContent = el.textContent || "";
         if (!html || html.length < textContent.length) {
             html = textContent;
         }
 
-        // �����������HTML�� innerHTML Ϊ�գ����Զ���DOM����
+        // Handle special cases where HTML is in textContent but innerHTML is empty, create DOM to parse
         if ((!html || html === textContent) && textContent.includes("<") && textContent.includes(">")) {
             try {
                 const temp = document.createElement("div");
@@ -1750,7 +1751,7 @@ private initSidebarUI(container: HTMLElement) {
                     html = parsed;
                 }
             } catch {
-                // ���ν���ʧ�ܣ�����ԭֵ
+                // If parsing fails, keep original value
             }
         }
 
@@ -1914,7 +1915,7 @@ private initSidebarUI(container: HTMLElement) {
         showMessage(this.i18n.markAllReadSuccess, 2000);
     }
 
-    // ��ǵ�������ԴΪ�Ѷ�
+    // Mark all articles of this subscription as read
     private async markSubscriptionRead(index: number, container: HTMLElement) {
         if (index < 0 || index >= this.subscriptions.length) return;
         
@@ -1968,7 +1969,7 @@ private initSidebarUI(container: HTMLElement) {
         }
     }
 
-    // ˢ�µ�������Դ
+    // Refresh the selected subscription source
     private async refreshSubscription(index: number, container: HTMLElement) {
         if (index < 0 || index >= this.subscriptions.length) return;
         
@@ -1980,7 +1981,7 @@ private initSidebarUI(container: HTMLElement) {
             
             showMessage(this.i18n.refreshSuccess, 1500);
             
-            // �����ǰѡ�е����������Դ��ˢ����ʾ
+            // If currently selected, refresh article list after fetching
             if (this.currentSubscriptionIndex === index && this.container) {
                 this.selectSubscription(index, this.container);
             }
@@ -1996,10 +1997,10 @@ private initSidebarUI(container: HTMLElement) {
         showMessage(this.i18n.refreshSuccess, 1500);
     }
 
-    // �������µ�˼Դ�����û�ѡ��Ŀ��ʼǱ�
+    // Save the new feed source to user's selected notebook
     private async saveArticleToSiYuan(article: Article) {
         try {
-            // ��ȡ�ʼǱ��б�
+            // Get notebook list
             const notebooks = await fetchSyncPost("/api/notebook/lsNotebooks", {});
             const allNotebooks = notebooks.data?.notebooks || [];
             const openNotebooks = allNotebooks.filter((nb: any) => !nb.closed);
@@ -2009,9 +2010,9 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
 
-            // �����ʼǱ�ѡ��Ի���
+            // Show notebook selection dialog
             const targetNbId = await this.showNotebookSelectionDialog(openNotebooks);
-            if (!targetNbId) return; // �û�ȡ��ѡ��
+            if (!targetNbId) return; // User cancelled selection
 
             let fileName = article.title
                 .replace(/[/\\:*?"<>|]/g, " ")
@@ -2020,23 +2021,23 @@ private initSidebarUI(container: HTMLElement) {
                 .substring(0, 180);
             if (!fileName) fileName = `RSS_${Date.now()}`;
 
-            // ����ͼƬ���Ű棺ʹ�� htmlToMarkdown ת����֧�� img/strong/em/links �ȣ�
+            // Extract images separately: use htmlToMarkdown to support img/strong/em/links etc.
             const articleHTML = article.content || article.description || "";
             logger.log("Save article:", article.title, "contentLen:", article.content?.length, "descLen:", article.description?.length, "htmlLen:", articleHTML.length);
             logger.log("Content preview (first 500):", articleHTML.substring(0, 500));
             const articleMarkdown = this.htmlToMarkdown(articleHTML);
             logger.log("Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
 
-            // Ԫ��Ϣ��
+            // Metadata lines
             let metaLines: string[] = [];
             if (article.pubDate) {
                 metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
             }
             if (article.link) {
-                metaLines.push(`> [ԭ������](${article.link})`);
+                metaLines.push(`> [Original link](${article.link})`);
             }
 
-            // �������� Markdown��һ����д�룬���� insertBlock �������⣩
+            // Prepare the final Markdown, one-time write to avoid insertBlock issues
             const fullMd = [
                 `# ${fileName}`,
                 ...metaLines,
@@ -2044,11 +2045,11 @@ private initSidebarUI(container: HTMLElement) {
                 articleMarkdown
             ].join("\n");
 
-            showMessage(`${this.i18n.savingTo}��${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}����`, 2000);
+            showMessage(`${this.i18n.savingTo}: ${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}...`, 2000);
 
             logger.log("Full markdown length:", fullMd.length, "preview:", fullMd.substring(0, 300));
 
-            // Step 1: �����ĵ���һ����д��ȫ�����ݣ�
+            // Step 1: Create the document and write all content at once
             const res = await fetchSyncPost("/api/filetree/createDocWithMd", {
                 notebook: targetNbId,
                 path: `/${fileName}`,
@@ -2057,7 +2058,7 @@ private initSidebarUI(container: HTMLElement) {
             logger.log("Create doc response:", JSON.stringify(res).substring(0, 500));
 
             if (res.code === 201 || res.code === 202) {
-                // �ļ��Ѵ��ڣ���Ψһ��������
+                // File already exists, use unique suffix
                 const uniqueName = `${fileName}_${Date.now().toString(36)}`;
                 const res2 = await fetchSyncPost("/api/filetree/createDocWithMd", {
                     notebook: targetNbId,
@@ -2065,37 +2066,37 @@ private initSidebarUI(container: HTMLElement) {
                     markdown: fullMd.replace(`# ${fileName}`, `# ${uniqueName}`)
                 });
                 if (!res2.data) {
-                    showMessage(`${this.i18n.saveFailed}��${this.i18n.docExists}`, 3000);
+                    showMessage(`${this.i18n.saveFailed}: ${this.i18n.docExists}`, 3000);
                     return;
                 }
             } else if (!res.data) {
-                showMessage(`${this.i18n.saveFailed}��${this.i18n.docCreateFailed}`, 3000);
+                showMessage(`${this.i18n.saveFailed}: ${this.i18n.docCreateFailed}`, 3000);
                 return;
             }
 
             const docId = res.data;
 
-            // Step 2: ˢ������
+            // Step 2: Flush transaction
             await fetchSyncPost("/api/sqlite/flushTransaction", {}).catch(() => {});
 
-            // Step 3: ת��Զ��ͼƬΪ������Դ���ο��ٷ� siyuan-chrome��
+            // Step 3: Convert remote images to local assets (reference from siyuan-chrome)
             if (docId) {
                 fetchSyncPost("/api/format/netImg2LocalAssets", {
                     id: docId,
                     url: article.link || ""
-                }).catch(() => {}); // ��Ĭʧ�ܣ���Ӱ�챣��
+                }).catch(() => {}); // Ignore failure,不影响保存
             }
 
-            // Step 4: ��¼����ʹ�õıʼǱ�
+            // Step 4: Record last used notebook
             this.settings.lastUsedNotebookId = targetNbId;
             await this.saveSettings();
 
             logger.log("Save complete:", fileName);
-            showMessage(`${this.i18n.saved}��${fileName}`, 4000);
+            showMessage(`${this.i18n.saved}: ${fileName}`, 4000);
 
         } catch (error) {
             console.error("[RSS] Save error:", error);
-            showMessage(`${this.i18n.saveFailed}��${error}`, 3000);
+            showMessage(`${this.i18n.saveFailed}: ${error}`, 3000);
         }
     }
 
@@ -2165,7 +2166,7 @@ private initSidebarUI(container: HTMLElement) {
                 return inner ? (inner + "\n\n") : "";
             }
             case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": {
-                // Fix: ʹ����ȷ�� markdown �����ʽ # ǰ��
+                // Fix: Use correct markdown heading format with # prefix
                 const level = parseInt(tag[1]);
                 const prefix = "#".repeat(level);
                 const inner = this._nodeToMarkdown(el, depth + 1);
@@ -2321,13 +2322,13 @@ ${escaped}
 
     // ==================== Dialogs ====================
 
-    // �ʼǱ�ѡ��Ի���
+    // Notebook selection dialog
     private async showNotebookSelectionDialog(notebooks: any[]): Promise<string | null> {
         return new Promise((resolve) => {
             const dialog = new Dialog({
-                title: `?? ${this.i18n.selectNotebook || 'ѡ��ʼǱ�'}`,
+                title: `${this.i18n.selectNotebook || 'Select Notebook'}`,
                 content: `<div class="b3-dialog__content" style="padding:16px;">
-                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || '��ѡ�񱣴�λ��'}</div>
+                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || 'Select save location'}</div>
                     <div style="display:flex;align-items:center;gap:12px;">
                         <select class="b3-select fn__block" id="notebookSelect" style="font-size:14px;flex:1;">
                             ${notebooks.map((nb, index) => 
@@ -2336,7 +2337,7 @@ ${escaped}
                         </select>
                         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
                             <input type="checkbox" class="b3-switch" id="rememberNotebook" checked>
-                            ${this.i18n.rememberChoice || '��סѡ��'}
+                            ${this.i18n.rememberChoice || 'Remember choice'}
                         </label>
                     </div>
                 </div>
@@ -2537,7 +2538,7 @@ ${escaped}
         // Bold/italic
         md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
         md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
-        // Block elements �� newlines
+        // Block elements and newlines
         md = md.replace(/<\/p>/gi, '\n\n');
         md = md.replace(/<\/div>/gi, '\n');
         md = md.replace(/<br\s*\/?>/gi, '\n');
@@ -2566,7 +2567,7 @@ ${escaped}
         c = c.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
         c = c.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
         c = c.replace(/javascript:/gi, '');
-        // Fix: ���ٸ� img �������� style���ᵼ��˼Դ AST ����������
+        // Fix: Remove extra img attributes style to prevent SiYuan AST parsing error
         c = c.replace(/<img(?![^>]*loading=)/gi, '<img loading="lazy" ');
         return c;
     }

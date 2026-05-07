@@ -81,5 +81,10 @@
     "subscriptionExists": "Subscription already exists, cannot add duplicate",
     "minimize": "Minimize",
     "toggleDock": "Toggle RSS Reader",
-    "openRssReader": "Open RSS Reader"
+    "openRssReader": "Open RSS Reader",
+    "parseWarning": "Some articles failed to parse",
+    "parseWarningDetail": "{total} articles total, {failed} failed to parse",
+    "requestTimeout": "Request timeout ({seconds}s), please check network connection or try again later",
+    "networkFailed": "Network connection failed: {error}\n\nPlease check:\n1. Network connection is normal\n2. Feed URL is correct\n3. Proxy is configured if needed",
+    "allRetriesFailed": "{error}\n\nTried {attempts} times, please check network connection and retry."
 }

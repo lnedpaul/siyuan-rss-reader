@@ -93,7 +93,7 @@ siyuan-rss-reader/
 Access plugin settings via the ⚙️ button in the toolbar:
 
 - **Articles per page**: Number of articles to load per batch (default: 20)
-- **Font size**: Small / Medium / Large
+- **Font size**: 12px,14px,16px,18px,20px
 - **Auto-refresh interval**: Minutes between automatic feed updates
 - **Keyboard shortcuts**: Enable/disable keyboard navigation
 

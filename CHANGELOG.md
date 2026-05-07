@@ -1,252 +1,280 @@
-# Changelog
+# 更新日志
 
-All notable changes to this project will be documented in this file.
+本项目的所有重要变更都将记录在此文件中。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
+项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
+## [0.1.14] - 2026-04-25
+
+### 新增
+- **包元数据**: 在 package.json 中添加 repository、bugs 和 homepage 字段，提升 npm 集成体验
+
+### 改进
+- **发布模式**: 设置 `disabledInPublish` 为 `true` - 插件是个人工具，不应在发布的笔记中加载
+- **日志管理**: 使用 `logger.log()` 替代 `console.log()`，在生产环境中尊重 DEBUG 标志
+- **依赖管理**: 在 package.json 中将构建时依赖（webpack、typescript 等）与运行时依赖（siyuan、dompurify）分离，提高清晰度
+- **代码清理**: 移除搜索功能相关的 CSS 样式（27 行），重命名模糊变量 `contentToSearch` → `contentForThumbnail`
+
+### 修复
+- **README 文档**: 修正键盘快捷键表格以匹配实际实现（J/K、A，移除 F/Escape）
+- **国际化清理**: 移除未使用的搜索相关翻译键（searchPlaceholder、noResults、helpFocusSearch、helpExitSearch）
+- **竞态条件**: 修复快速切换订阅源时文章列表显示错误内容的问题 - 在异步请求后添加索引检查
+- **RSS 解析健壮性**: 增强 RSS/Atom 解析的错误处理 - 每个字段都有独立的 try-catch，部分失败不会破坏整篇文章，解析失败时显示友好的警告信息
+- **网络请求超时**: 添加基于 AbortController 的超时控制，支持每个订阅源配置超时时间（默认 15 秒），清晰的超时错误提示
+- **重试机制增强**: 改进指数退避重试逻辑（1s → 2s → 4s），分类错误消息（超时/网络/一般），全面的失败通知
+- **存储键命名空间隔离**: 为所有存储键添加插件名称前缀（`siyuan-rss-reader_`），防止与其他插件冲突，包含从旧键的自动数据迁移
+- **文章去重健壮性**: 增强文章 ID 生成，采用多级回退策略（link → title+date → timestamp），防止 link 缺失或重复时的重复问题，在合并逻辑中添加冲突检测
+- **文件编码**: 移除 src/index.ts 中的 UTF-8 BOM（字节顺序标记），防止在某些编辑器中出现显示问题
+
+### 移除
+- **未使用的 addTopBar 代码**: 移除 `onLayoutReady()` 方法及其隐藏顶部图标和 MutationObserver（审核人员建议）
 
 ## [0.1.13] - 2026-05-06
 
-### Changed
-- **Publish Mode**: Set `disabledInPublish` to `true` - plugin is personal tool and should not load in published notes
-- **Logging**: Replaced `console.log` with `logger.log()` to respect DEBUG flag in production
+### 新增
+- **包元数据**: 在 package.json 中添加 repository、bugs 和 homepage 字段，提升 npm 集成体验
 
-### Fixed
-- **README Documentation**: Fixed keyboard shortcuts table to match actual implementation (J/K, A, removed F/Escape)
-- **i18n Cleanup**: Removed unused search-related translation keys (searchPlaceholder, noResults, helpFocusSearch, helpExitSearch)
+### 改进
+- **发布模式**: 设置 `disabledInPublish` 为 `true` - 插件是个人工具，不应在发布的笔记中加载
+- **日志管理**: 使用 `logger.log()` 替代 `console.log()`，在生产环境中尊重 DEBUG 标志
+- **依赖管理**: 在 package.json 中将构建时依赖（webpack、typescript 等）与运行时依赖（siyuan、dompurify）分离，提高清晰度
 
-### Removed
-- **Unused addTopBar Code**: Removed `onLayoutReady()` method with hidden top bar icon and MutationObserver (suggested by reviewer)
-- **topBarObserver**: Removed unused MutationObserver property and cleanup code
+### 修复
+- **README 文档**: 修正键盘快捷键表格以匹配实际实现（J/K、A，移除 F/Escape）
+- **国际化清理**: 移除未使用的搜索相关翻译键（searchPlaceholder、noResults、helpFocusSearch、helpExitSearch）
+- **竞态条件**: 修复快速切换订阅源时文章列表显示错误内容的问题 - 在异步请求后添加索引检查
+- **RSS 解析健壮性**: 增强 RSS/Atom 解析的错误处理 - 每个字段都有独立的 try-catch，部分失败不会破坏整篇文章，解析失败时显示友好的警告信息
+- **网络请求超时**: 添加基于 AbortController 的超时控制，支持每个订阅源配置超时时间（默认 15 秒），清晰的超时错误提示
+- **重试机制增强**: 改进指数退避重试逻辑（1s → 2s → 4s），分类错误消息（超时/网络/一般），全面的失败通知
+- **存储键命名空间隔离**: 为所有存储键添加插件名称前缀（`siyuan-rss-reader_`），防止与其他插件冲突，包含从旧键的自动数据迁移
+- **文章去重健壮性**: 增强文章 ID 生成，采用多级回退策略（link → title+date → timestamp），防止 link 缺失或重复时的重复问题，在合并逻辑中添加冲突检测
+- **文件编码**: 移除 src/index.ts 中的 UTF-8 BOM（字节顺序标记），防止在某些编辑器中出现显示问题
+
+### 移除
+- **未使用的 addTopBar 代码**: 移除 `onLayoutReady()` 方法及其隐藏顶部图标和 MutationObserver（审核人员建议）
+- **topBarObserver**: 移除未使用的 MutationObserver 属性和清理代码
+- **未使用的依赖**: 从 dependencies 中移除 `rss-parser`（项目使用自定义 RSS 解析器）
+- **过时注释**: 移除关于 `addTopBar()` 迁移到 `onLayoutReady()` 的过时注释（该方法已不存在）
 
 ---
 
 ## [0.1.12] - 2026-05-05
 
-### Changed
-- **Publish Mode**: Set `disabledInPublish` to `true` - plugin is personal tool and should not load in published notes
+### 改进
+- **发布模式**: 设置 `disabledInPublish` 为 `true` - 插件是个人工具，不应在发布的笔记中加载
 
 ---
 
 ## [0.1.11] - 2026-05-05
 
-### Fixed
-- **Help Dialog Duplicate Issue**: Fixed critical bug where help dialog appeared multiple times (3 overlapping dialogs)
-- **Dialog Close Button**: Simplified close button logic using `destroyCallback` instead of MutationObserver
-- **Encoding Issue**: Fixed `??` emoji rendering issue in dialog title
-- **Race Condition**: Added synchronous flag check to prevent multiple dialog instances
+### 修复
+- **帮助对话框重复问题**: 修复关键 bug，帮助对话框多次出现（3 个重叠对话框）
+- **对话框关闭按钮**: 简化关闭按钮逻辑，使用 `destroyCallback` 替代 MutationObserver
+- **编码问题**: 修复对话框标题中的 `??` emoji 渲染问题
+- **竞态条件**: 添加同步标志检查，防止多个对话框实例
 
-### Changed
-- **Version Bump**: Updated to v0.1.11 after fixing help dialog duplication issue
-- **Code Cleanup**: Removed complex MutationObserver logic for dialog tracking
+### 改进
+- **版本升级**: 修复帮助对话框重复问题后升级到 v0.1.11
+- **代码清理**: 移除用于对话框跟踪的复杂 MutationObserver 逻辑
 
 ---
 
 ## [0.1.10] - 2026-05-03
 
-### Fixed
-- **Keywords Compliance**: Removed "SiYuan" brand name from keywords per marketplace guidelines
-- **README Links**: Converted all relative links to absolute URLs for proper rendering in marketplace
-- **Lifecycle Method**: Renamed `ondestroy()` to `onunload()` (correct SiYuan API method name)
-- **Memory Leak**: Added proper cleanup for two MutationObserver instances in `onunload()`
-- **Data Cleanup**: Added `uninstall()` method to remove all plugin data when uninstalled from marketplace
-- **Keyboard Shortcuts**: Removed non-functional search shortcuts (`/` and `Esc`) since search feature was removed
-- **Help Dialog**: Updated keyboard shortcuts help to remove search-related entries
-- **Duplicate Help Dialogs**: Fixed issue where pressing '?' could open multiple overlapping help dialogs
-- **Dialog Close Button**: Fixed close button to properly destroy dialog with single click
+### 修复
+- **关键词合规**: 根据市场指南从 keywords 中移除 "SiYuan" 品牌名称
+- **README 链接**: 将所有相对链接转换为绝对 URL，以便在市场列表中正确渲染
+- **生命周期方法**: 将 `ondestroy()` 重命名为 `onunload()`（正确的 SiYuan API 方法名）
+- **内存泄漏**: 在 `onunload()` 中添加两个 MutationObserver 实例的正确清理
+- **数据清理**: 添加 `uninstall()` 方法，从市场卸载时移除所有插件数据
+- **键盘快捷键**: 移除无功能的搜索快捷键（`/` 和 `Esc`），因为搜索功能已移除
+- **帮助对话框**: 更新键盘快捷键帮助，移除搜索相关条目
+- **重复帮助对话框**: 修复按 '?' 可能打开多个重叠帮助对话框的问题
+- **对话框关闭按钮**: 修复关闭按钮，使其能够通过单击正确销毁对话框
 
-### Changed
-- **MutationObserver Management**: Stored observer references as class properties for proper cleanup
-- **Plugin Uninstall**: Users can now completely remove plugin data by uninstalling from marketplace
-- **Code Cleanup**: Removed unused search-related code (`focusSearchInput`, `exitSearchMode`, `handleSearch`, etc.)
+### 改进
+- **MutationObserver 管理**: 将 observer 引用存储为类属性以便正确清理
+- **插件卸载**: 用户现在可以通过从市场卸载来完全移除插件数据
+- **代码清理**: 移除未使用的搜索相关代码（`focusSearchInput`、`exitSearchMode`、`handleSearch` 等）
 
 ---
 
 ## [0.1.9] - 2026-05-03
 
-### Removed
-- **FORCED_RELOAD_GUIDE.md**: Removed obsolete troubleshooting guide
-- **TROUBLESHOOTING.md**: Removed outdated diagnostic documentation (content integrated into CHANGELOG)
-- **assets/icons/**: Deleted unused SVG icon files (9 files) - icons are now defined inline in code
-- **docs/DESIGN.md**: Removed design document (project completed)
+### 移除
+- **FORCED_RELOAD_GUIDE.md**: 移除过时的故障排除指南
+- **TROUBLESHOOTING.md**: 移除过时的诊断文档（内容已整合到 CHANGELOG）
+- **assets/icons/**: 删除未使用的 SVG 图标文件（9 个文件）- 图标现在在代码中内联定义
+- **docs/DESIGN.md**: 移除设计文档（项目已完成）
 
-### Changed
-- **Project Structure**: Cleaner, more focused project layout
-- **Documentation**: Consolidated and streamlined documentation
-- **preview.png**: Kept for SiYuan marketplace listing requirement
+### 改进
+- **项目结构**: 更清晰、更专注的项目布局
+- **文档**: 整合并精简文档
+- **preview.png**: 保留用于 SiYuan 市场列表要求
 
 ---
 
 ## [0.1.8] - 2026-05-03
 
-### Fixed
-- **SiYuan 3.6.5 Compatibility**: Moved `addTopBar()` from `onload()` to `onLayoutReady()` lifecycle method
-- **API Migration**: Fixed critical API usage issue - SiYuan 3.3+ requires `addTopBar()` to be called in `onLayoutReady()`
+### 修复
+- **SiYuan 3.6.5 兼容性**: 将 `addTopBar()` 从 `onload()` 移动到 `onLayoutReady()` 生命周期方法
+- **API 迁移**: 修复关键的 API 使用问题 - SiYuan 3.3+ 要求在 `onLayoutReady()` 中调用 `addTopBar()`
 
-### Changed
-- **Lifecycle Compliance**: Plugin now follows SiYuan 3.3+ API specifications correctly
-- **Version Compatibility**: Updated to work properly with SiYuan 3.6.5
+### 改进
+- **生命周期合规**: 插件现在正确遵循 SiYuan 3.3+ API 规范
+- **版本兼容性**: 更新以与 SiYuan 3.6.5 正常工作
 
 ---
 
 ## [0.1.7] - 2026-05-03
 
-### Fixed
-- **Top Bar Icon Hidden**: Added robust JavaScript-based hiding logic with MutationObserver to ensure top bar icon stays hidden
-- **Dual Display Issue**: Resolved conflict between top bar icon and plugin list entry - now only shows in management list
+### 修复
+- **顶部栏图标隐藏**: 添加健壮的基于 JavaScript 的隐藏逻辑，使用 MutationObserver 确保顶部栏图标保持隐藏
+- **双重显示问题**: 解决顶部栏图标和插件列表条目之间的冲突 - 现在只显示在管理列表中
 
-### Changed
-- **Hide Mechanism**: Enhanced from simple `display: none` to comprehensive style hiding with MutationObserver monitoring
-- **Plugin Visibility**: Plugin correctly appears in Settings → Plugins list while top bar icon is completely hidden
+### 改进
+- **隐藏机制**: 从简单的 `display: none` 增强为全面的样式隐藏，带 MutationObserver 监控
+- **插件可见性**: 插件正确显示在设置 → 插件列表中，同时顶部栏图标完全隐藏
 
 ---
 
 ## [0.1.6] - 2026-05-03
 
-### Removed
-- **Top Bar Icon**: Removed `addTopBar()` to eliminate duplicate icon in top toolbar
-- Plugin now only shows in **Settings → Plugins management list** and **Dock bottom bar**
+### 移除
+- **顶部栏图标**: 移除 `addTopBar()` 以消除顶部工具栏中的重复图标
+- 插件现在只显示在**设置 → 插件管理列表**和**Dock 底部栏**
 
-### Changed
-- **Cleaner UI**: Removed redundant top bar icon, keeping only Dock bottom icon and plugin management entry
-- **Command Palette**: Still accessible via command palette with "Open RSS Reader" command
+### 改进
+- **更简洁的 UI**: 移除冗余的顶部栏图标，仅保留 Dock 底部图标和插件管理入口
+- **命令面板**: 仍可通过命令面板访问，使用"打开 RSS 阅读器"命令
 
 ---
 
 ## [0.1.5] - 2026-05-03
 
-### Added
-- **Top Bar Icon**: Added `addTopBar()` to display plugin icon in SiYuan's top toolbar - REQUIRED for plugin to appear in Settings panel plugin list
-- **Plugin List Display**: Plugin now appears in Settings → Plugins list with icon and name (matching other plugins like Savor Callout, Link Icons, etc.)
+### 新增
+- **顶部栏图标**: 添加 `addTopBar()` 以在 SiYuan 的顶部工具栏中显示插件图标 - 使插件出现在设置面板插件列表所必需
+- **插件列表显示**: 插件现在出现在设置 → 插件列表中，带有图标和名称（与其他插件如 Savor Callout、Link Icons 等一致）
 
-### Changed
-- **Plugin Visibility**: Top bar icon enables proper plugin registration in SiYuan's plugin management system
-- **User Experience**: Click top bar icon to toggle RSS Reader Dock panel (same functionality as Dock bottom icon)
+### 改进
+- **插件可见性**: 顶部栏图标启用 SiYuan 插件管理系统中的正确插件注册
+- **用户体验**: 点击顶部栏图标切换 RSS 阅读器 Dock 面板（与 Dock 底部图标功能相同）
 
 ---
 
 ## [0.1.4] - 2026-05-03
 
-### Fixed
-- **Dock Icon Conflict**: Reordered icon registration to ensure `iconRSSMain` is registered first, preventing conflicts with built-in icons
-- **Command Registration**: Changed command langKey from `toggleDock` to `openRssReader` for proper menu display
-- **Dock Toggle Logic**: Fixed dock icon button selector to use `.dock__item[data-type="rss_reader_dock"]` instead of generic selector
+### 修复
+- **Dock 图标冲突**: 重新排序图标注册以确保 `iconRSSMain` 首先注册，防止与内置图标冲突
+- **命令注册**: 将命令 langKey 从 `toggleDock` 更改为 `openRssReader` 以正确显示菜单
+- **Dock 切换逻辑**: 修复 dock 图标按钮选择器，使用 `.dock__item[data-type="rss_reader_dock"]` 替代通用选择器
 
-### Changed
-- **Icon Registration Order**: Moved `iconRSSMain` symbol definition to the top of SVG registration list to ensure priority
-- **Command Language Key**: Updated command registration to use more descriptive `openRssReader` key
-- **Enhanced Logging**: Added detailed icon registration log showing all 8 registered icons
+### 改进
+- **图标注册顺序**: 将 `iconRSSMain` 符号定义移到 SVG 注册列表顶部以确保优先级
+- **命令语言键**: 更新命令注册以使用更具描述性的 `openRssReader` 键
+- **增强日志**: 添加详细的图标注册日志，显示所有 8 个注册的图标
 
 ---
 
 ## [0.1.3] - 2026-05-03
 
-### Fixed
-- **Plugin Icon in Marketplace**: Added missing `icon` field to plugin.json to display icon in SiYuan's plugin management menu
-- **Plugin Registration**: Fixed plugin.json configuration to ensure proper icon display in marketplace
+### 修复
+- **市场中的插件图标**: 在 plugin.json 中添加缺失的 `icon` 字段，以在 SiYuan 的插件管理菜单中显示图标
+- **插件注册**: 修复 plugin.json 配置以确保在市场列表中正确显示图标
 
-### Changed
-- **Plugin Manifest**: Updated plugin.json with required `icon: "icon.png"` field for marketplace compatibility
+### 改进
+- **插件清单**: 使用必需的 `icon: "icon.png"` 字段更新 plugin.json 以实现市场兼容性
 
 ---
 
 ## [0.1.2] - 2026-05-03
 
-### Changed
-- **Dock Icon**: Changed Dock bottom icon from iconSave to iconRSSMain for better visual identity
-- **Title Bar Icon**: Unified all title bar icons to use iconRSSMain instead of iconRss
-- **Empty State Icon**: Updated empty subscription list icon to iconRSSMain
+### 改进
+- **Dock 图标**: 将 Dock 底部图标从 iconSave 更改为 iconRSSMain，以获得更好的视觉识别
+- **标题栏图标**: 统一所有标题栏图标使用 iconRSSMain 替代 iconRss
+- **空状态图标**: 更新空订阅列表图标为 iconRSSMain
 
-### Fixed
-- **Dock Icon Display**: Fixed Dock bottom icon showing wrong icon (iconSave/iconRss) instead of iconRSSMain
-- **Icon Consistency**: Unified all plugin icons to use custom iconRSSMain instead of built-in icons
-- **Plugin Registration**: Fixed icon registration to ensure iconRSSMain is properly displayed in Dock
+### 修复
+- **Dock 图标显示**: 修复 Dock 底部图标显示错误图标（iconSave/iconRss）而非 iconRSSMain 的问题
+- **图标一致性**: 统一所有插件图标使用自定义 iconRSSMain 而非内置图标
+- **插件注册**: 修复图标注册以确保 iconRSSMain 在 Dock 中正确显示
 
-### Performance
-- **Smart Caching**: Added 5-minute cache expiration to reduce unnecessary network requests
-- **Request Deduplication**: Prevented duplicate concurrent requests for the same subscription
-- **DOM Optimization**: Used DocumentFragment for better performance when appending articles
-- **Expected Performance Improvement**: 50-70% faster subscription switching
+### 性能
+- **智能缓存**: 添加 5 分钟缓存过期以减少不必要的网络请求
+- **请求去重**: 防止同一订阅源的重复并发请求
+- **DOM 优化**: 使用 DocumentFragment 在追加文章时获得更好的性能
+- **预期性能提升**: 订阅源切换速度提升 50-70%
 
 ---
 
 ## [0.1.1] - 2026-04-25
 
-### Changed
-- Unified title bar button sizes and hover effects
-- Updated icons to Lucide Icons with consistent visual sizing
-- Refined button styles: transparent borders with hover color effects
-- Optimized save button, add button, and toolbar button interactions
-- Standardized CSS class usage for better maintainability
-- Removed tooltip artifacts from all title bar buttons
+### 改进
+- 统一标题栏按钮大小和悬停效果
+- 更新图标为 Lucide Icons，具有一致的视觉大小
+- 优化按钮样式：透明边框带悬停颜色效果
+- 优化保存按钮、添加按钮和工具栏按钮交互
+- 标准化 CSS 类使用以提高可维护性
+- 移除所有标题栏按钮的工具提示伪影
 
-### Fixed
-- Icon size inconsistency across settings, help, and minimize buttons
-- Hover border effects not displaying correctly on save button
-- Unified hover styles across all action buttons
+### 修复
+- 设置、帮助和最小化按钮之间的图标大小不一致
+- 保存按钮上悬停边框效果未正确显示
+- 统一所有操作按钮的悬停样式
 
 ---
 
 ## [0.1.0] - 2026-04-25
 
-### Added
-- **Dock Panel Integration**: Native dock panel with 8 position options (left/right/bottom sides)
-- **Resizable Layout**: Drag to adjust sidebar/article list/content panel sizes
-- **Infinite Scroll**: Auto-load more articles when scrolling to bottom
-- **Keyboard Shortcuts**: Full keyboard navigation support (↑/↓/Enter/O/S/R/M/F/Esc/?)
-- **Customizable Settings**: Font size, articles per page, auto-refresh interval
-- **Internationalization (i18n)**: Chinese (zh_CN) and English (en_US) translations
-- **Dark Mode**: Auto-follows SiYuan theme (light/dark)
-- **Custom Title Bar**: Built-in title bar with toolbar buttons (Add, Refresh, Mark All Read, Settings, Help, Minimize)
-- **CI/CD Pipeline**: GitHub Actions workflow for automated build and lint checks
-- **Contributing Guide**: CONTRIBUTING.md with development guidelines and PR process
+### 新增
+- **Dock 面板集成**: 原生 dock 面板，支持 8 个位置选项（左/右/底部侧边）
+- **可调整布局**: 拖动调整侧边栏/文章列表/内容面板大小
+- **无限滚动**: 滚动到底部时自动加载更多文章
+- **键盘快捷键**: 完整的键盘导航支持（↑/↓/Enter/O/S/R/M/F/Esc/?）
+- **可定制设置**: 字体大小、每页文章数、自动刷新间隔
+- **国际化 (i18n)**: 中文 (zh_CN) 和英文 (en_US) 翻译
+- **深色模式**: 自动跟随 SiYuan 主题（浅色/深色）
+- **自定义标题栏**: 内置标题栏带工具栏按钮（添加、刷新、全部标记已读、设置、帮助、最小化）
+- **CI/CD 流水线**: GitHub Actions 工作流用于自动化构建和 lint 检查
+- **贡献指南**: CONTRIBUTING.md 包含开发指南和 PR 流程
 
-### Changed
-- Migrated from dialog-based UI to dock panel for better integration
-- Improved RSS parsing with better error handling
-- Enhanced HTML-to-Markdown conversion for saving articles
-- Optimized article rendering with dynamic font sizes
-- Updated repository URLs to https://github.com/lnedpaul/siyuan-rss-reader
-- Clarified dist/ directory is build output (not in git) in README files
-- Enhanced package.json with additional scripts (lint:check, type-check, clean)
+### 改进
+- 从基于对话框的 UI 迁移到 dock 面板以获得更好的集成
+- 改进 RSS 解析，提供更好的错误处理
+- 增强 HTML 到 Markdown 转换以保存文章
+- 优化文章渲染，支持动态字体大小
+- 更新仓库 URL 为 https://github.com/lnedpaul/siyuan-rss-reader
+- 在 README 文件中澄清 dist/ 目录是构建输出（不在 git 中）
+- 增强 package.json，添加额外脚本（lint:check、type-check、clean）
 
-### Fixed
-- Encoding issues with Chinese characters in source files
-- Infinite scroll not triggering when list is shorter than container
-- Help dialog now uses i18n translations instead of hardcoded Chinese
-- Removed duplicate `detectLanguage()` calls in plugin initialization
-- Removed build artifacts (zip files) from git tracking
-- Fixed plugin.json URL pointing to correct repository
+### 修复
+- 源文件中的中文字符编码问题
+- 当列表短于容器时无限滚动未触发
+- 帮助对话框现在使用 i18n 翻译而非硬编码的中文
+- 移除插件初始化中的重复 `detectLanguage()` 调用
+- 从 git 跟踪中移除构建产物（zip 文件）
+- 修复 plugin.json URL 指向正确的仓库
 
-### Removed
-- Build artifacts (*.zip) from git repository (now managed via GitHub Releases)
+### 移除
+- 从 git 仓库中移除构建产物（*.zip）（现在通过 GitHub Releases 管理）
 
 ## [0.0.1] - 2026-04-15
 
-### Added
-- Initial project structure with TypeScript + SCSS
-- RSS/Atom subscription management (add/delete/rename)
-- Article list display and detail page reading
-- One-click save article to SiYuan note
-- Chinese (zh_CN) and English (en_US) internationalization
-- Documentation: README, DESIGN, CONTRIBUTING
-- Sidebar mode (dock) replacing dialog mode
-- 8 different dock positions support
-- Horizontal and vertical separator resizing
-- Default dock width increased to 50% of window
-- Subscription source width set to 20% of dock
+### 新增
+- 初始项目结构，使用 TypeScript + SCSS
+- RSS/Atom 订阅管理（添加/删除/重命名）
+- 文章列表显示和详情页阅读
+- 一键保存文章到 SiYuan 笔记
+- 中文 (zh_CN) 和英文 (en_US) 国际化
+- 文档：README、DESIGN、CONTRIBUTING
+- 侧边栏模式（dock）替代对话框模式
+- 支持 8 种不同的 dock 位置
+- 水平和垂直分隔符调整大小
+- 默认 dock 宽度增加到窗口的 50%
+- 订阅源宽度设置为 dock 的 20%
 
 ---
 
-## Roadmap
+## 路线图
 
-### Planned Features
-- [ ] Readability integration for better content extraction
-- [ ] Multiple notebook support (choose target notebook when saving)
-- [ ] Offline mode with article caching
-- [ ] Custom style settings (font, spacing)
-- [ ] OPML import/export
-- [ ] Article starring/favorites
-- [ ] Reading progress tracking
-- [ ] Article tags
-- [ ] Scheduled updates with notifications

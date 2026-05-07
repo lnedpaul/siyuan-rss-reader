@@ -1,8 +1,16 @@
 {
   "name": "siyuan-rss-reader",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "RSS reader plugin for SiYuan Note",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lnedpaul/siyuan-rss-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lnedpaul/siyuan-rss-reader/issues"
+  },
+  "homepage": "https://github.com/lnedpaul/siyuan-rss-reader#readme",
   "scripts": {
     "dev": "webpack --mode development --watch",
     "build": "webpack --mode production",
@@ -10,12 +18,12 @@
     "clean": "rm -rf dist/"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "copy-webpack-plugin": "^11.0.0",
     "css-loader": "^6.8.1",
     "mini-css-extract-plugin": "^2.7.6",
     "sass": "^1.63.6",
     "sass-loader": "^13.3.2",
-    "siyuan": "^1.2.0",
     "ts-loader": "^9.4.4",
     "typescript": "^5.1.6",
     "webpack": "^5.88.1",
@@ -23,6 +31,7 @@
     "zip-webpack-plugin": "^4.0.3"
   },
   "dependencies": {
-    "rss-parser": "^3.13.0"
+    "dompurify": "^3.1.6",
+    "siyuan": "^1.2.0"
   }
 }
