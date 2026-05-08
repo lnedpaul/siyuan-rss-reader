@@ -138,6 +138,8 @@ export default class RSSReaderPlugin extends Plugin {
     private pendingTimeouts: NodeJS.Timeout[] = [];
     // Debounce timer for saving read status to prevent excessive writes
     private saveDebounceTimer: NodeJS.Timeout | null = null;
+    // Throttle timer for scroll events to reduce performance overhead
+    private scrollThrottleTimer: NodeJS.Timeout | null = null;
     // Track if subscription events are bound to prevent duplicates
     private subscriptionEventsBound: boolean = false;
     // Request lock map to prevent duplicate concurrent requests per subscription (stores raw feed data)
@@ -364,6 +366,12 @@ export default class RSSReaderPlugin extends Plugin {
         if (this.saveDebounceTimer) {
             clearTimeout(this.saveDebounceTimer);
             this.saveDebounceTimer = null;
+        }
+        
+        // Clear scroll throttle timer
+        if (this.scrollThrottleTimer) {
+            clearTimeout(this.scrollThrottleTimer);
+            this.scrollThrottleTimer = null;
         }
         
         // Cancel all pending network requests
@@ -1393,19 +1401,26 @@ private initSidebarUI(container: HTMLElement) {
         }
 
         this.listScrollHandler = () => {
-            // Skip when already loading or no more articles
-            if (this.isLoadingMore) return;
-            if (this.currentArticles.length === 0) return;
+            // Throttle scroll events to reduce performance overhead (100ms interval)
+            if (this.scrollThrottleTimer) return;
+            
+            this.scrollThrottleTimer = this.safeSetTimeout(() => {
+                this.scrollThrottleTimer = null;
+                
+                // Skip when already loading or no more articles
+                if (this.isLoadingMore) return;
+                if (this.currentArticles.length === 0) return;
 
-            const { scrollTop, scrollHeight, clientHeight } = articleList;
-            if (scrollTop + clientHeight >= scrollHeight - 80) {
-                if (this.displayedArticleCount < this.currentArticles.length) {
-                    this.isLoadingMore = true;
-                    this.renderArticleList(container, true);
-                    // Unlock after a short delay to prevent rapid-fire
-                    this.safeSetTimeout(() => { this.isLoadingMore = false; }, 500);
+                const { scrollTop, scrollHeight, clientHeight } = articleList;
+                if (scrollTop + clientHeight >= scrollHeight - 80) {
+                    if (this.displayedArticleCount < this.currentArticles.length) {
+                        this.isLoadingMore = true;
+                        this.renderArticleList(container, true);
+                        // Unlock after a short delay to prevent rapid-fire
+                        this.safeSetTimeout(() => { this.isLoadingMore = false; }, 500);
+                    }
                 }
-            }
+            }, 100);
         };
 
         articleList.addEventListener("scroll", this.listScrollHandler);

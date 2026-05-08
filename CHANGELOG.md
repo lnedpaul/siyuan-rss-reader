@@ -15,6 +15,7 @@
 - **日志管理**: 使用 `logger.log()` 替代 `console.log()`，在生产环境中尊重 DEBUG 标志
 - **依赖管理**: 在 package.json 中将构建时依赖（webpack、typescript 等）与运行时依赖（siyuan、dompurify）分离，提高清晰度
 - **代码清理**: 移除搜索功能相关的 CSS 样式（27 行），重命名模糊变量 `contentToSearch` → `contentForThumbnail`
+- **性能优化**: 为 scroll 事件添加节流机制（100ms 间隔），减少高频滚动时的性能开销，避免不必要的重复计算
 
 ### 修复
 - **README 文档**: 修正键盘快捷键表格以匹配实际实现（J/K、A，移除 F/Escape）
