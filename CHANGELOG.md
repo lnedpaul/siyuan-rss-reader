@@ -5,7 +5,23 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.1.14] - 2026-04-25
+## [0.1.15] - 2026-05-08
+
+### 改进
+- **移动端兼容性**: 为所有交互按钮添加触摸支持（touchstart/touchend 事件），替换内联 onmouseenter/onmouseleave 为统一的事件处理，确保触摸屏设备上的视觉反馈正常
+- **构建优化**: 
+  - 生产环境移除 LICENSE banner，减小包体积
+  - 配置 TerserPlugin 激进压缩：移除 console.log、debugger、注释
+  - 启用 Tree Shaking 和 sideEffects 标记，优化未使用代码
+  - 显式排除 .map 文件，确保生产包不包含 source maps
+  - 添加 clean: true 选项，每次构建前清理输出目录
+- **性能优化**: 
+  - 实现已读状态批量保存机制，使用 Map 收集待处理更改，1 秒防抖后统一写入
+  - 减少频繁 I/O 操作：快速浏览 10 篇文章从 10 次写入降低到 1 次
+  - 添加定期清理功能：自动删除 30 天前的已读记录，防止数据无限增长
+  - 插件卸载时强制刷新待处理数据，避免数据丢失
+
+## [0.1.14] - 2026-05-07
 
 ### 新增
 - **包元数据**: 在 package.json 中添加 repository、bugs 和 homepage 字段，提升 npm 集成体验
@@ -16,6 +32,7 @@
 - **依赖管理**: 在 package.json 中将构建时依赖（webpack、typescript 等）与运行时依赖（siyuan、dompurify）分离，提高清晰度
 - **代码清理**: 移除搜索功能相关的 CSS 样式（27 行），重命名模糊变量 `contentToSearch` → `contentForThumbnail`
 - **性能优化**: 为 scroll 事件添加节流机制（100ms 间隔），减少高频滚动时的性能开销，避免不必要的重复计算
+- **缓存管理**: 添加文章缓存过期和清理机制 - 自动删除已取消订阅源的缓存，清理超过 7 天的旧缓存，包含从旧格式到新格式的自动迁移
 
 ### 修复
 - **README 文档**: 修正键盘快捷键表格以匹配实际实现（J/K、A，移除 F/Escape）

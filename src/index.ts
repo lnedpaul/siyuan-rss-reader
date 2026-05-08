@@ -67,8 +67,13 @@ interface ReadStatus {
     };
 }
 
+interface CachedArticleEntry {
+    articles: Article[];
+    cachedAt: number; // Timestamp when articles were cached
+}
+
 interface CachedArticles {
-    [subscriptionId: string]: Article[];
+    [subscriptionId: string]: CachedArticleEntry;
 }
 
 interface FontSizeConfig {
@@ -142,6 +147,9 @@ export default class RSSReaderPlugin extends Plugin {
     private scrollThrottleTimer: NodeJS.Timeout | null = null;
     // Track if subscription events are bound to prevent duplicates
     private subscriptionEventsBound: boolean = false;
+    // Performance optimization: batch read status changes before saving
+    private pendingReadStatusChanges: Map<string, { isRead: boolean; readAt: number }> = new Map();
+    private readStatusSaveTimer: NodeJS.Timeout | null = null;
     // Request lock map to prevent duplicate concurrent requests per subscription (stores raw feed data)
     private pendingRequests: Map<string, Promise<{ items: RSSItem[] }>> = new Map();
     // Cache expiration time (5 minutes) - avoid unnecessary re-fetches
@@ -284,6 +292,13 @@ export default class RSSReaderPlugin extends Plugin {
         const status = await this.loadData(READ_STATUS_NAME);
         this.readStatus = status || {};
 
+        // Clean up stale and orphaned cache entries
+        await this.migrateCacheFormat();
+        await this.cleanupCache();
+        
+        // Clean up old read status entries (keep last 30 days)
+        await this.cleanupReadStatus();
+
         this.boundHandleKeyboard = this.handleKeyboard.bind(this);
 
         // Register custom icons for the plugin
@@ -372,6 +387,21 @@ export default class RSSReaderPlugin extends Plugin {
         if (this.scrollThrottleTimer) {
             clearTimeout(this.scrollThrottleTimer);
             this.scrollThrottleTimer = null;
+        }
+        
+        // Flush pending read status changes before unload
+        if (this.pendingReadStatusChanges.size > 0) {
+            logger.log(`[Unload] Flushing ${this.pendingReadStatusChanges.size} pending read status changes`);
+            if (this.readStatusSaveTimer) {
+                clearTimeout(this.readStatusSaveTimer);
+            }
+            // Synchronously apply changes to avoid data loss
+            for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
+                this.readStatus[articleId] = status;
+            }
+            this.pendingReadStatusChanges.clear();
+            // Note: saveData is async, but we can't await in onunload
+            // The changes are already applied to readStatus object
         }
         
         // Cancel all pending network requests
@@ -646,7 +676,7 @@ private initSidebarUI(container: HTMLElement) {
         if (this.subscriptions.length === 0) {
             // When empty: show "+" button first, then empty state message
             html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.borderColor='#26c6da';this.style.color='#26c6da';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                <button id="tbAdd" title="${this.i18n.add}" class="rss-action-btn" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;">
                     <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
@@ -671,13 +701,13 @@ private initSidebarUI(container: HTMLElement) {
                         </div>
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
-                    <button class="mark-read-rss" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='#ffa726';this.style.color='#ffa726';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                    <button class="mark-read-rss rss-action-btn" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSCheck"></use></svg>
                     </button>
-                    <button class="refresh-rss" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='var(--b3-theme-success)';this.style.color='var(--b3-theme-success)';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                    <button class="refresh-rss rss-action-btn" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSRefresh"></use></svg>
                     </button>
-                    <button class="delete-rss" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;" onmouseenter="this.style.borderColor='var(--b3-theme-error)';this.style.color='var(--b3-theme-error)';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                    <button class="delete-rss rss-action-btn" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
                         <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSDelete"></use></svg>
                     </button>
                 </div>
@@ -685,7 +715,7 @@ private initSidebarUI(container: HTMLElement) {
             
             // Add button at bottom of subscription list
             html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;" onmouseenter="this.style.borderColor='#26c6da';this.style.color='#26c6da';" onmouseleave="this.style.borderColor='transparent';this.style.color='var(--b3-font-color-quaternary)';">
+                <button id="tbAdd" title="${this.i18n.add}" class="rss-action-btn" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;">
                     <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
                 </button>
             </div>`;
@@ -702,28 +732,51 @@ private initSidebarUI(container: HTMLElement) {
         const rssList = container.querySelector("#rssList");
         if (!rssList) return;
 
+        // Setup hover/touch effects for all action buttons with rss-action-btn class
+        const actionButtons = rssList.querySelectorAll('.rss-action-btn');
+        actionButtons.forEach(btn => {
+            const button = btn as HTMLElement;
+            
+            // Mouse events for desktop
+            button.addEventListener('mouseenter', () => {
+                if (button.id === 'tbAdd') {
+                    button.style.borderColor = '#26c6da';
+                    button.style.color = '#26c6da';
+                }
+            });
+            
+            button.addEventListener('mouseleave', () => {
+                if (button.id === 'tbAdd') {
+                    button.style.borderColor = 'transparent';
+                    button.style.color = 'var(--b3-font-color-quaternary)';
+                }
+            });
+            
+            // Touch events for mobile
+            button.addEventListener('touchstart', () => {
+                if (button.id === 'tbAdd') {
+                    button.style.borderColor = '#26c6da';
+                    button.style.color = '#26c6da';
+                }
+            }, { passive: true });
+            
+            button.addEventListener('touchend', () => {
+                setTimeout(() => {
+                    if (button.id === 'tbAdd') {
+                        button.style.borderColor = 'transparent';
+                        button.style.color = 'var(--b3-font-color-quaternary)';
+                    }
+                }, 150);
+            }, { passive: true });
+        });
+
         // Handle hover effects with mouseover/mouseout (bubbling events)
+        // Also add touch support for mobile devices
         rssList.addEventListener("mouseover", (e) => {
             const target = e.target as HTMLElement;
             const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
             if (btn) {
-                const button = btn as HTMLElement;
-                if (button.classList.contains('delete-rss')) {
-                    // Delete button - red style
-                    button.style.background = 'var(--b3-theme-error-light)';
-                    button.style.borderColor = 'var(--b3-theme-error)';
-                    button.style.color = 'var(--b3-theme-error)';
-                } else if (button.classList.contains('refresh-rss')) {
-                    // Refresh button - green style
-                    button.style.background = 'rgba(16, 185, 129, 0.15)';
-                    button.style.borderColor = 'rgb(16, 185, 129)';
-                    button.style.color = 'rgb(16, 185, 129)';
-                } else if (button.classList.contains('mark-read-rss')) {
-                    // Mark read button - blue style
-                    button.style.background = 'rgba(59, 130, 246, 0.15)';
-                    button.style.borderColor = 'rgb(59, 130, 246)';
-                    button.style.color = 'rgb(59, 130, 246)';
-                }
+                this.applyButtonHoverEffect(btn as HTMLElement, true);
             }
         });
 
@@ -734,12 +787,29 @@ private initSidebarUI(container: HTMLElement) {
             
             // Only reset if we're actually leaving the button (not entering a child element)
             if (btn && !btn.contains(relatedTarget)) {
-                const button = btn as HTMLElement;
-                button.style.background = 'transparent';
-                button.style.borderColor = 'transparent';
-                button.style.color = 'var(--b3-font-color-quaternary)';
+                this.applyButtonHoverEffect(btn as HTMLElement, false);
             }
         });
+
+        // Add touch event handlers for mobile devices
+        rssList.addEventListener("touchstart", (e) => {
+            const target = e.target as HTMLElement;
+            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
+            if (btn) {
+                this.applyButtonHoverEffect(btn as HTMLElement, true);
+            }
+        }, { passive: true });
+
+        rssList.addEventListener("touchend", (e) => {
+            const target = e.target as HTMLElement;
+            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
+            if (btn) {
+                // Delay to show feedback before resetting
+                setTimeout(() => {
+                    this.applyButtonHoverEffect(btn as HTMLElement, false);
+                }, 150);
+            }
+        }, { passive: true });
 
         // Handle click events
         rssList.addEventListener("click", (e) => {
@@ -1250,6 +1320,16 @@ private initSidebarUI(container: HTMLElement) {
         const featuredSelect = dialog.element.querySelector("#featuredFeeds") as HTMLSelectElement;
         const confirmBtn = dialog.element.querySelector("#confirmAdd") as HTMLButtonElement;
 
+        // Add real-time URL validation feedback
+        urlInput.addEventListener('input', () => {
+            const url = urlInput.value.trim();
+            if (url && !this.isValidUrl(url)) {
+                urlInput.style.borderColor = 'var(--b3-theme-error)';
+            } else {
+                urlInput.style.borderColor = '';
+            }
+        });
+
         featuredSelect.onchange = () => {
             const val = featuredSelect.value;
             if (val) {
@@ -1264,7 +1344,19 @@ private initSidebarUI(container: HTMLElement) {
         confirmBtn.onclick = async () => {
             const url = urlInput.value.trim();
             const name = nameInput.value.trim();
-            if (!url) { showMessage(this.i18n.feedUrl, 2000); return; }
+            
+            // Validate URL is not empty
+            if (!url) { 
+                showMessage(this.i18n.feedUrl || "Please enter feed URL", 2000); 
+                return; 
+            }
+            
+            // Validate URL format
+            if (!this.isValidUrl(url)) {
+                showMessage("Invalid URL format. Please enter a valid HTTP/HTTPS URL.", 3000);
+                urlInput.focus();
+                return;
+            }
 
             // Check if subscription already exists (by URL)
             const existingSub = this.subscriptions.find(sub => sub.url === url);
@@ -1530,23 +1622,10 @@ private initSidebarUI(container: HTMLElement) {
             }
         }
 
-        // Mark as read (if needed) - debounced save
+        // Mark as read (if needed) - use batch save
         if (this.settings.autoMarkRead && !article.isRead) {
             article.isRead = true;
-            this.readStatus[article.id] = { isRead: true, readAt: Date.now() };
-            
-            // Debounce save operations to prevent excessive writes
-            if (this.saveDebounceTimer) {
-                clearTimeout(this.saveDebounceTimer);
-            }
-            this.saveDebounceTimer = this.safeSetTimeout(async () => {
-                try {
-                    await this.saveData(READ_STATUS_NAME, this.readStatus);
-                    await this.cacheArticles(article.subscriptionId, this.currentArticles);
-                } catch (error) {
-                    logger.error("Failed to save read status:", error);
-                }
-            }, 500); // Wait 500ms before saving
+            this.markArticleRead(article.id);
         }
 
         // Add 'selected' class to new item and update styles
@@ -1600,7 +1679,20 @@ private initSidebarUI(container: HTMLElement) {
         // Store current article in a weak reference instead of capturing in closure
         const saveBtn = contentEl.querySelector(".save-to-siyuan-btn") as HTMLButtonElement;
         if (saveBtn) {
-            // Use onclick with ID lookup instead of capturing entire article object
+            // Add touch support for mobile devices
+            saveBtn.addEventListener('touchstart', () => {
+                saveBtn.style.transform = "scale(1.1)";
+                saveBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.25)";
+            }, { passive: true });
+
+            saveBtn.addEventListener('touchend', () => {
+                setTimeout(() => {
+                    saveBtn.style.transform = "scale(1)";
+                    saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
+                }, 150);
+            }, { passive: true });
+
+            // Keep mouse events for desktop
             saveBtn.onmouseenter = () => {
                 saveBtn.style.transform = "scale(1.1)";
                 saveBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.25)";
@@ -1609,6 +1701,7 @@ private initSidebarUI(container: HTMLElement) {
                 saveBtn.style.transform = "scale(1)";
                 saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
             };
+            
             saveBtn.onclick = () => {
                 // Lookup article by ID instead of capturing it in closure
                 const articleId = saveBtn.getAttribute('data-article-id');
@@ -1893,7 +1986,8 @@ private initSidebarUI(container: HTMLElement) {
 
     private async getCachedArticles(subId: string): Promise<Article[]> {
         const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-        return cached[subId] || [];
+        const entry = cached[subId];
+        return entry ? entry.articles : [];
     }
 
     private async cacheArticles(subId: string, articles: Article[]) {
@@ -1901,10 +1995,184 @@ private initSidebarUI(container: HTMLElement) {
             // Keep only the latest MAX_CACHED_ARTICLES
             const trimmed = articles.slice(0, MAX_CACHED_ARTICLES);
             const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-            cached[subId] = trimmed;
+            cached[subId] = {
+                articles: trimmed,
+                cachedAt: Date.now()
+            };
             await this.saveData(CACHED_ARTICLES_NAME, cached);
         } catch (error) {
             logger.error("Failed to cache articles:", error);
+        }
+    }
+
+    /**
+     * Batch save read status with debouncing
+     * Collects all pending changes and saves them together to reduce I/O operations
+     */
+    private async batchSaveReadStatus(): Promise<void> {
+        // Clear existing timer
+        if (this.readStatusSaveTimer) {
+            clearTimeout(this.readStatusSaveTimer);
+        }
+
+        // Debounce: wait 1 second before saving to batch multiple changes
+        this.readStatusSaveTimer = this.safeSetTimeout(async () => {
+            if (this.pendingReadStatusChanges.size === 0) return;
+
+            try {
+                // Apply all pending changes to readStatus
+                for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
+                    this.readStatus[articleId] = status;
+                }
+                
+                // Save to storage
+                await this.saveData(READ_STATUS_NAME, this.readStatus);
+                
+                // Clear pending changes
+                this.pendingReadStatusChanges.clear();
+                
+                logger.log(`[Batch Save] Saved ${this.pendingReadStatusChanges.size} read status changes`);
+            } catch (error) {
+                logger.error("Failed to batch save read status:", error);
+            }
+        }, 1000); // 1 second debounce
+    }
+
+    /**
+     * Mark article as read with batching support
+     */
+    private markArticleRead(articleId: string): void {
+        const now = Date.now();
+        this.pendingReadStatusChanges.set(articleId, { isRead: true, readAt: now });
+        this.readStatus[articleId] = { isRead: true, readAt: now };
+        
+        // Trigger batch save
+        this.batchSaveReadStatus();
+    }
+
+    /**
+     * Migrate cache format from old Article[] to new CachedArticleEntry
+     * Old format: { subId: Article[] }
+     * New format: { subId: { articles: Article[], cachedAt: number } }
+     */
+    private async migrateCacheFormat(): Promise<void> {
+        try {
+            const cached: any = await this.loadData(CACHED_ARTICLES_NAME);
+            if (!cached || typeof cached !== 'object') return;
+            
+            // Check if already migrated (has cachedAt property)
+            const firstKey = Object.keys(cached)[0];
+            if (firstKey && cached[firstKey]?.cachedAt) {
+                logger.log("[Cache Migration] Cache format is already up-to-date");
+                return;
+            }
+            
+            // Migrate old format to new format
+            logger.log("[Cache Migration] Migrating cache format...");
+            const migrated: CachedArticles = {};
+            let migratedCount = 0;
+            
+            for (const [subId, articles] of Object.entries(cached)) {
+                if (Array.isArray(articles)) {
+                    migrated[subId] = {
+                        articles: articles,
+                        cachedAt: Date.now() // Use current time for migrated entries
+                    };
+                    migratedCount++;
+                }
+            }
+            
+            if (migratedCount > 0) {
+                await this.saveData(CACHED_ARTICLES_NAME, migrated);
+                logger.log(`[Cache Migration] Successfully migrated ${migratedCount} cache entries`);
+            }
+        } catch (error) {
+            logger.error("[Cache Migration] Failed to migrate cache format:", error);
+        }
+    }
+
+    /**
+     * Clean up stale and orphaned cache entries
+     * - Remove caches for deleted subscriptions
+     * - Remove caches older than 7 days
+     */
+    private async cleanupCache(): Promise<void> {
+        try {
+            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+            const subscriptionIds = new Set(this.subscriptions.map(s => s.id));
+            const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 days in milliseconds
+            
+            let cleanedCount = 0;
+            const keysToRemove: string[] = [];
+            
+            for (const subId of Object.keys(cached)) {
+                const entry = cached[subId];
+                
+                // Remove if subscription no longer exists
+                if (!subscriptionIds.has(subId)) {
+                    keysToRemove.push(subId);
+                    cleanedCount++;
+                    logger.log(`[Cache Cleanup] Removed orphaned cache for deleted subscription: ${subId}`);
+                    continue;
+                }
+                
+                // Remove if cache is older than 7 days
+                if (entry.cachedAt < sevenDaysAgo) {
+                    keysToRemove.push(subId);
+                    cleanedCount++;
+                    logger.log(`[Cache Cleanup] Removed expired cache for subscription: ${subId} (cached ${Math.floor((Date.now() - entry.cachedAt) / (24 * 60 * 60 * 1000))} days ago)`);
+                }
+            }
+            
+            // Remove identified keys
+            for (const key of keysToRemove) {
+                delete cached[key];
+            }
+            
+            // Save cleaned cache
+            if (cleanedCount > 0) {
+                await this.saveData(CACHED_ARTICLES_NAME, cached);
+                logger.log(`[Cache Cleanup] Cleaned ${cleanedCount} cache entries`);
+            }
+        } catch (error) {
+            logger.error("[Cache Cleanup] Failed to clean cache:", error);
+        }
+    }
+
+    /**
+     * Clean up old read status entries to prevent unbounded growth
+     * Keep only entries from the last 30 days
+     */
+    private async cleanupReadStatus(): Promise<void> {
+        try {
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000); // 30 days
+            const currentSize = Object.keys(this.readStatus).length;
+            
+            if (currentSize === 0) return;
+            
+            let removedCount = 0;
+            const keysToRemove: string[] = [];
+            
+            for (const [articleId, status] of Object.entries(this.readStatus)) {
+                if (status.readAt && status.readAt < thirtyDaysAgo) {
+                    keysToRemove.push(articleId);
+                    removedCount++;
+                }
+            }
+            
+            // Apply removals
+            for (const key of keysToRemove) {
+                delete this.readStatus[key];
+            }
+            
+            if (removedCount > 0) {
+                await this.saveData(READ_STATUS_NAME, this.readStatus);
+                logger.log(`[Read Status Cleanup] Removed ${removedCount} old entries (kept ${currentSize - removedCount})`);
+            } else {
+                logger.log("[Read Status Cleanup] No old entries to clean");
+            }
+        } catch (error) {
+            logger.error("Failed to cleanup read status:", error);
         }
     }
 
@@ -1916,11 +2184,19 @@ private initSidebarUI(container: HTMLElement) {
 
     private async markAllRead(container: HTMLElement) {
         if (this.currentArticles.length === 0) return;
+        
+        // Batch mark all articles as read
         for (const a of this.currentArticles) {
             a.isRead = true;
-            this.readStatus[a.id] = { isRead: true, readAt: Date.now() };
+            this.markArticleRead(a.id);
         }
-        await this.saveData(READ_STATUS_NAME, this.readStatus);
+        
+        // Force immediate save for bulk operations
+        if (this.readStatusSaveTimer) {
+            clearTimeout(this.readStatusSaveTimer);
+        }
+        await this.batchSaveReadStatus();
+        
         if (this.currentSubscriptionIndex >= 0) {
             await this.cacheArticles(this.subscriptions[this.currentSubscriptionIndex].id, this.currentArticles);
         }
@@ -1948,12 +2224,16 @@ private initSidebarUI(container: HTMLElement) {
             for (const a of articles) {
                 if (!a.isRead) {
                     a.isRead = true;
-                    this.readStatus[a.id] = { isRead: true, readAt: Date.now() };
+                    this.markArticleRead(a.id);
                     markedCount++;
                 }
             }
             
-            await this.saveData(READ_STATUS_NAME, this.readStatus);
+            // Force immediate save for bulk operations
+            if (this.readStatusSaveTimer) {
+                clearTimeout(this.readStatusSaveTimer);
+            }
+            await this.batchSaveReadStatus();
             await this.cacheArticles(sub.id, articles);
             
             showMessage(`${this.i18n.markAllReadSuccess} (${markedCount})`, 2000);
@@ -2585,6 +2865,46 @@ ${escaped}
         // Fix: Remove extra img attributes style to prevent SiYuan AST parsing error
         c = c.replace(/<img(?![^>]*loading=)/gi, '<img loading="lazy" ');
         return c;
+    }
+
+    /**
+     * Validate URL format
+     * @param url - URL string to validate
+     * @returns true if URL is valid HTTP/HTTPS URL
+     */
+    private isValidUrl(url: string): boolean {
+        try {
+            const urlObj = new URL(url);
+            // Only allow http and https protocols
+            return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Apply hover/touch effect to action buttons
+     * Supports both mouse and touch interactions for mobile compatibility
+     * @param button - The button element
+     * @param isActive - Whether the button is in active/hover state
+     */
+    private applyButtonHoverEffect(button: HTMLElement, isActive: boolean): void {
+        if (button.classList.contains('delete-rss')) {
+            // Delete button - red style
+            button.style.background = isActive ? 'var(--b3-theme-error-light)' : 'transparent';
+            button.style.borderColor = isActive ? 'var(--b3-theme-error)' : 'transparent';
+            button.style.color = isActive ? 'var(--b3-theme-error)' : 'var(--b3-font-color-quaternary)';
+        } else if (button.classList.contains('refresh-rss')) {
+            // Refresh button - green style
+            button.style.background = isActive ? 'rgba(16, 185, 129, 0.15)' : 'transparent';
+            button.style.borderColor = isActive ? 'rgb(16, 185, 129)' : 'transparent';
+            button.style.color = isActive ? 'rgb(16, 185, 129)' : 'var(--b3-font-color-quaternary)';
+        } else if (button.classList.contains('mark-read-rss')) {
+            // Mark read button - blue style
+            button.style.background = isActive ? 'rgba(59, 130, 246, 0.15)' : 'transparent';
+            button.style.borderColor = isActive ? 'rgb(59, 130, 246)' : 'transparent';
+            button.style.color = isActive ? 'rgb(59, 130, 246)' : 'var(--b3-font-color-quaternary)';
+        }
     }
 
     private formatDate(dateStr: string): string {

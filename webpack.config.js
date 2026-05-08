@@ -5,6 +5,7 @@ const webpack = require('webpack');
 const ZipPlugin = require('zip-webpack-plugin');
 const fs = require('fs');
 const pluginJson = require('./plugin.json');
+const TerserPlugin = require('terser-webpack-plugin');
 
 module.exports = (env, argv) => {
   const isProd = argv.mode === 'production';
@@ -14,6 +15,7 @@ module.exports = (env, argv) => {
       filename: 'index.js',
       path: path.resolve(__dirname, 'dist'),
       libraryTarget: 'commonjs',
+      clean: true, // Clean the output directory before each build
     },
     resolve: {
       extensions: ['.ts', '.js', '.scss', '.css'],
@@ -52,14 +54,17 @@ module.exports = (env, argv) => {
       new MiniCssExtractPlugin({
         filename: 'index.css',
       }),
-      new webpack.BannerPlugin({
-        banner: () => {
-          const license = fs.readFileSync('LICENSE').toString();
-          return `/*!\n${license}\n*/`;
-        },
-        raw: true,
-        entryOnly: true,
-      }),
+      // Only add LICENSE banner in development for easier debugging
+      ...(isProd ? [] : [
+        new webpack.BannerPlugin({
+          banner: () => {
+            const license = fs.readFileSync('LICENSE').toString();
+            return `/*!\n${license}\n*/`;
+          },
+          raw: true,
+          entryOnly: true,
+        })
+      ]),
       new CopyPlugin({
         patterns: [
           { from: 'plugin.json', to: 'plugin.json' },
@@ -74,7 +79,9 @@ module.exports = (env, argv) => {
         new ZipPlugin({
           filename: 'package.zip',
           algorithm: 'gzip',
+          // Only include necessary files, exclude source maps and dev files
           include: [/\.js$/, /\.css$/, /plugin\.json$/, /icon\.png$/, /preview\.png$/, /README.*\.md$/, /i18n\//],
+          exclude: [/\.map$/], // Explicitly exclude source maps
         })
       ] : []),
     ],
@@ -82,6 +89,31 @@ module.exports = (env, argv) => {
       siyuan: 'siyuan',
     },
     devtool: isProd ? false : 'source-map',
+    // Production optimization
+    optimization: isProd ? {
+      minimize: true,
+      minimizer: [
+        new TerserPlugin({
+          terserOptions: {
+            compress: {
+              drop_console: true, // Remove console.log in production
+              drop_debugger: true,
+              pure_funcs: ['logger.debug'], // Remove debug calls
+            },
+            mangle: {
+              toplevel: false, // Don't mangle top-level names (important for plugin exports)
+            },
+            output: {
+              comments: false, // Remove all comments
+            },
+          },
+          extractComments: false, // Don't extract comments to separate file
+        }),
+      ],
+      // Enable tree shaking
+      usedExports: true,
+      sideEffects: false, // Mark module as side-effect free for better tree shaking
+    } : {},
     stats: 'errors-only',
   };
 };
