@@ -674,10 +674,13 @@ private initSidebarUI(container: HTMLElement) {
         let html = '';
         
         if (this.subscriptions.length === 0) {
-            // When empty: show "+" button first, then empty state message
-            html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" class="rss-action-btn" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;">
-                    <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
+            // When empty: show enhanced "+" button with slide animation, then empty state message
+            html += `<div style="padding:8px;display:flex;justify-content:center;">
+                <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
+                    <span class="rss-add-btn-sign">
+                        <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
+                    </span>
+                    <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
                 </button>
             </div>`;
             html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
@@ -701,22 +704,36 @@ private initSidebarUI(container: HTMLElement) {
                         </div>
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
-                    <button class="mark-read-rss rss-action-btn" data-index="${index}" title="${this.i18n.markAllRead}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSCheck"></use></svg>
-                    </button>
-                    <button class="refresh-rss rss-action-btn" data-index="${index}" title="${this.i18n.refresh}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSRefresh"></use></svg>
-                    </button>
-                    <button class="delete-rss rss-action-btn" data-index="${index}" title="${this.i18n.delete}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--b3-font-color-quaternary);border-radius:4px;transition:all 0.2s;pointer-events:auto;z-index:10;flex-shrink:0;">
-                        <svg style="width:16px;height:16px;pointer-events:none;color:inherit;"><use xlink:href="#iconRSSDelete"></use></svg>
-                    </button>
+                    <div class="subscription-actions">
+                        <button class="mark-read-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.markAllRead}">
+                            <span class="rss-action-btn-sign">
+                                <svg><use xlink:href="#iconRSSCheck"></use></svg>
+                            </span>
+                            <span class="rss-action-btn-text">${this.i18n.markAllRead || 'Mark Read'}</span>
+                        </button>
+                        <button class="refresh-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.refresh}">
+                            <span class="rss-action-btn-sign">
+                                <svg><use xlink:href="#iconRSSRefresh"></use></svg>
+                            </span>
+                            <span class="rss-action-btn-text">${this.i18n.refresh || 'Refresh'}</span>
+                        </button>
+                        <button class="delete-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.delete}">
+                            <span class="rss-action-btn-sign">
+                                <svg><use xlink:href="#iconRSSDelete"></use></svg>
+                            </span>
+                            <span class="rss-action-btn-text">${this.i18n.delete || 'Delete'}</span>
+                        </button>
+                    </div>
                 </div>
             `).join("");
             
             // Add button at bottom of subscription list
-            html += `<div style="padding:4px;display:flex;justify-content:center;">
-                <button id="tbAdd" title="${this.i18n.add}" class="rss-action-btn" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--b3-font-color-quaternary);background:transparent;border:1px solid transparent;cursor:pointer;border-radius:6px;transition:all 0.2s;">
-                    <svg style="width:18px;height:18px;color:inherit;"><use xlink:href="#iconRSSAdd"></use></svg>
+            html += `<div style="padding:8px;display:flex;justify-content:center;">
+                <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
+                    <span class="rss-add-btn-sign">
+                        <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
+                    </span>
+                    <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
                 </button>
             </div>`;
         }
@@ -733,49 +750,61 @@ private initSidebarUI(container: HTMLElement) {
         if (!rssList) return;
 
         // Setup hover/touch effects for all action buttons with rss-action-btn class
+        // Note: Enhanced buttons use CSS hover effects, no JS needed
         const actionButtons = rssList.querySelectorAll('.rss-action-btn');
         actionButtons.forEach(btn => {
             const button = btn as HTMLElement;
             
-            // Mouse events for desktop
-            button.addEventListener('mouseenter', () => {
-                if (button.id === 'tbAdd') {
-                    button.style.borderColor = '#26c6da';
-                    button.style.color = '#26c6da';
-                }
-            });
-            
-            button.addEventListener('mouseleave', () => {
-                if (button.id === 'tbAdd') {
-                    button.style.borderColor = 'transparent';
-                    button.style.color = 'var(--b3-font-color-quaternary)';
-                }
-            });
-            
-            // Touch events for mobile
-            button.addEventListener('touchstart', () => {
-                if (button.id === 'tbAdd') {
-                    button.style.borderColor = '#26c6da';
-                    button.style.color = '#26c6da';
-                }
-            }, { passive: true });
-            
-            button.addEventListener('touchend', () => {
-                setTimeout(() => {
+            // Mouse events for desktop (only for simple buttons, not enhanced)
+            if (!button.classList.contains('rss-action-btn-enhanced')) {
+                button.addEventListener('mouseenter', () => {
+                    if (button.id === 'tbAdd') {
+                        button.style.borderColor = '#26c6da';
+                        button.style.color = '#26c6da';
+                    }
+                });
+                
+                button.addEventListener('mouseleave', () => {
                     if (button.id === 'tbAdd') {
                         button.style.borderColor = 'transparent';
                         button.style.color = 'var(--b3-font-color-quaternary)';
                     }
-                }, 150);
-            }, { passive: true });
+                });
+                
+                // Touch events for mobile
+                button.addEventListener('touchstart', () => {
+                    if (button.id === 'tbAdd') {
+                        button.style.borderColor = '#26c6da';
+                        button.style.color = '#26c6da';
+                    }
+                }, { passive: true });
+                
+                button.addEventListener('touchend', () => {
+                    setTimeout(() => {
+                        if (button.id === 'tbAdd') {
+                            button.style.borderColor = 'transparent';
+                            button.style.color = 'var(--b3-font-color-quaternary)';
+                        }
+                    }, 150);
+                }, { passive: true });
+            }
         });
 
         // Handle hover effects with mouseover/mouseout (bubbling events)
         // Also add touch support for mobile devices
+        
+        // Track which actions container is currently being hovered
+        let currentHoveringContainer: HTMLElement | null = null;
+        
         rssList.addEventListener("mouseover", (e) => {
             const target = e.target as HTMLElement;
             const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
-            if (btn) {
+            const actionsContainer = target.closest(".subscription-actions");
+            
+            if (btn && actionsContainer) {
+                // Mark this container as hovering and highlight the button
+                currentHoveringContainer = actionsContainer as HTMLElement;
+                actionsContainer.classList.add('hovering');
                 this.applyButtonHoverEffect(btn as HTMLElement, true);
             }
         });
@@ -784,10 +813,22 @@ private initSidebarUI(container: HTMLElement) {
             const target = e.target as HTMLElement;
             const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement;
             const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
+            const actionsContainer = target.closest(".subscription-actions");
             
-            // Only reset if we're actually leaving the button (not entering a child element)
-            if (btn && !btn.contains(relatedTarget)) {
-                this.applyButtonHoverEffect(btn as HTMLElement, false);
+            // Only process if we're leaving a button
+            if (btn && actionsContainer) {
+                // Check if we're leaving the entire subscription-actions container
+                if (!actionsContainer.contains(relatedTarget)) {
+                    // Left the container completely - reset everything
+                    actionsContainer.classList.remove('hovering');
+                    this.applyButtonHoverEffect(btn as HTMLElement, false);
+                    currentHoveringContainer = null;
+                } else if (!btn.contains(relatedTarget)) {
+                    // Moved to another button within the same container
+                    // Reset current button but keep hovering class
+                    this.applyButtonHoverEffect(btn as HTMLElement, false);
+                    // The new button's mouseover will handle adding effects
+                }
             }
         });
 
@@ -1663,7 +1704,8 @@ private initSidebarUI(container: HTMLElement) {
                     </div>
                 </div>
                 <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
-                    <svg class="block__logoicon" style="width:24px;height:24px;color:inherit;"><use xlink:href="#iconRSSSave"></use></svg>
+                    <svg class="block__logoicon"><use xlink:href="#iconRSSSave"></use></svg>
+                    <span class="save-to-siyuan-btn-text">${this.i18n.saveNote || 'Save'}</span>
                 </button>
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">
@@ -2889,21 +2931,15 @@ ${escaped}
      * @param isActive - Whether the button is in active/hover state
      */
     private applyButtonHoverEffect(button: HTMLElement, isActive: boolean): void {
-        if (button.classList.contains('delete-rss')) {
-            // Delete button - red style
-            button.style.background = isActive ? 'var(--b3-theme-error-light)' : 'transparent';
-            button.style.borderColor = isActive ? 'var(--b3-theme-error)' : 'transparent';
-            button.style.color = isActive ? 'var(--b3-theme-error)' : 'var(--b3-font-color-quaternary)';
-        } else if (button.classList.contains('refresh-rss')) {
-            // Refresh button - green style
-            button.style.background = isActive ? 'rgba(16, 185, 129, 0.15)' : 'transparent';
-            button.style.borderColor = isActive ? 'rgb(16, 185, 129)' : 'transparent';
-            button.style.color = isActive ? 'rgb(16, 185, 129)' : 'var(--b3-font-color-quaternary)';
-        } else if (button.classList.contains('mark-read-rss')) {
-            // Mark read button - blue style
-            button.style.background = isActive ? 'rgba(59, 130, 246, 0.15)' : 'transparent';
-            button.style.borderColor = isActive ? 'rgb(59, 130, 246)' : 'transparent';
-            button.style.color = isActive ? 'rgb(59, 130, 246)' : 'var(--b3-font-color-quaternary)';
+        // Only manage the hovering class on parent container
+        // All button styling is now handled by CSS
+        const actionsContainer = button.closest('.subscription-actions');
+        if (actionsContainer) {
+            if (isActive) {
+                actionsContainer.classList.add('hovering');
+            } else {
+                actionsContainer.classList.remove('hovering');
+            }
         }
     }
 

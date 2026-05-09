@@ -67,30 +67,6 @@
                         font-weight: 500;
                     }
                 }
-
-                .delete-rss,
-                .refresh-rss,
-                .mark-read-rss {
-                    width: var(--rss-button-size);
-                    height: var(--rss-button-size);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    border: 1px solid transparent;
-                    background: transparent;
-                    cursor: pointer;
-                    color: var(--b3-font-color-quaternary);
-                    border-radius: 4px;
-                    transition: all 0.2s;
-                    padding: 0;
-                    
-                    svg {
-                        width: var(--rss-icon-size);
-                        height: var(--rss-icon-size);
-                    }
-                    
-                    // ✅ Hover effects handled by JavaScript event delegation
-                }
             }
         }
     }
@@ -238,32 +214,62 @@ body.b3-theme-dark,
     }
 }
 
-// Save to note button styles
+// Save to note button styles - with slide animation
 .save-to-siyuan-btn {
     flex-shrink: 0;
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--b3-font-color-quaternary);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid #15b4db;
+    background: #15b4db;
+    color: var(--b3-font-color);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    overflow: hidden;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                border-radius 0.4s ease,
+                background-color 0.3s ease;
     padding: 0;
+    line-height: 1;
     
     svg {
-        width: 24px;
-        height: 24px;
-        color: inherit;
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        fill: none;
+        flex-shrink: 0;
+        vertical-align: middle;
     }
     
     &:hover {
-        border-color: var(--b3-theme-primary);
-        color: var(--b3-theme-primary);
+        width: 120px;
+        background-color: rgba(21, 180, 219, 0.8);
+        border-radius: 16px;
     }
+}
+
+// Save button text
+.save-to-siyuan-btn-text {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    max-width: 0;
+    opacity: 0;
+    margin-left: 0;
+    margin-top: 0;
+    line-height: 1;
+    display: inline-block;
+    transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                opacity 0.3s ease,
+                margin-left 0.3s ease;
+}
+
+.save-to-siyuan-btn:hover .save-to-siyuan-btn-text {
+    max-width: 60px;
+    opacity: 1;
+    margin-left: 4px;
 }
 
 // Title bar action buttons (Settings, Help, Minimize)
@@ -294,3 +300,238 @@ span[data-type="min"] {
     color: inherit;
 }
 
+// Enhanced add subscription button with slide animation
+.rss-add-btn-enhanced {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--b3-theme-primary);  // Blue border
+    border-radius: 50%;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition-duration: 0.3s;
+    box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+    background-color: var(--b3-theme-primary);  // Blue background (same as border)
+    color: var(--b3-font-color);  // Theme text color (white in dark, black in light)
+    padding: 0;
+    
+    /* plus sign */
+    .rss-add-btn-sign {
+        width: 100%;
+        transition-duration: 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        
+        svg {
+            width: 16px;
+            height: 16px;
+            stroke: currentColor;  // Inherit from parent (theme text color)
+            fill: none;
+        }
+    }
+    
+    /* text */
+    .rss-add-btn-text {
+        position: absolute;
+        right: 0%;
+        width: 0%;
+        opacity: 0;
+        color: currentColor;  // Inherit from parent (theme text color)
+        font-size: 14px;
+        font-weight: 600;
+        transition-duration: 0.3s;
+        white-space: nowrap;
+    }
+    
+    /* hover effect on button width */
+    &:hover {
+        width: 100px;
+        border-radius: 20px;
+        transition-duration: 0.3s;
+        background-color: var(--b3-theme-primary-light);  // Lighter blue on hover
+        border-color: var(--b3-theme-primary);
+        
+        .rss-add-btn-sign {
+            width: 30%;
+            transition-duration: 0.3s;
+            padding-left: 8px;
+        }
+        
+        /* hover effect button's text */
+        .rss-add-btn-text {
+            opacity: 1;
+            width: 70%;
+            transition-duration: 0.3s;
+            padding-right: 8px;
+        }
+    }
+    
+    /* button click effect */
+    &:active {
+        transform: translate(2px, 2px);
+    }
+}
+
+// Simplified blue add button for subscription list (when subscriptions exist)
+.rss-add-btn-simple {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--b3-theme-primary);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--b3-theme-primary);
+    color: var(--b3-font-color);  // Auto-adapts to theme (white/black)
+    transition: all 0.2s;
+    padding: 0;
+    
+    svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        fill: none;
+    }
+    
+    &:hover {
+        background-color: var(--b3-theme-primary-light);
+        border-color: var(--b3-theme-primary);
+    }
+    
+    &:active {
+        transform: translate(2px, 2px);
+    }
+}
+
+// Container for action buttons - fixed width for hover expansion
+.subscription-actions {
+    position: relative;
+    width: 96px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+}
+
+// Magic: hide non-hovered buttons only when a button is actually hovered
+.subscription-actions:has(.mark-read-rss:hover) .refresh-rss,
+.subscription-actions:has(.mark-read-rss:hover) .delete-rss,
+.subscription-actions:has(.refresh-rss:hover) .mark-read-rss,
+.subscription-actions:has(.refresh-rss:hover) .delete-rss,
+.subscription-actions:has(.delete-rss:hover) .mark-read-rss,
+.subscription-actions:has(.delete-rss:hover) .refresh-rss {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+// Enhanced action buttons with slide animation
+.rss-action-btn-enhanced {
+    position: absolute;
+    height: 24px;
+    width: 24px;
+    border-radius: 12px;
+    padding: 0;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: pointer;
+    box-sizing: border-box;
+    z-index: 1;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                opacity 0.3s ease,
+                background-color 0.3s ease,
+                z-index 0s 0.4s;
+    
+    // Colored backgrounds - visual trick: border same as background
+    &.mark-read-rss {
+        background-color: #ff8c00;
+        border-color: #ff8c00;
+        color: var(--b3-font-color);
+    }
+    
+    &.refresh-rss {
+        background-color: #4caf50;
+        border-color: #4caf50;
+        color: var(--b3-font-color);
+    }
+    
+    &.delete-rss {
+        background-color: #e53935;
+        border-color: #e53935;
+        color: var(--b3-font-color);
+    }
+    
+    // Hover state - visual trick: background lightens, border shows
+    &:hover {
+        width: 100%;
+        z-index: 2;
+        transition-delay: 0s;
+        
+        &.mark-read-rss {
+            background-color: rgba(255, 140, 0, 0.8);
+        }
+        
+        &.refresh-rss {
+            background-color: rgba(76, 175, 80, 0.8);
+        }
+        
+        &.delete-rss {
+            background-color: rgba(229, 57, 53, 0.8);
+        }
+    }
+}
+
+// --- Expand direction anchors ---
+.mark-read-rss {
+    left: 0;
+}
+
+.refresh-rss {
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.delete-rss {
+    right: 0;
+}
+
+// Icon container
+.rss-action-btn-sign {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    
+    svg {
+        width: 100%;
+        height: 100%;
+        stroke: currentColor;
+        fill: none;
+    }
+}
+
+// Text container
+.rss-action-btn-text {
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    max-width: 0;
+    opacity: 0;
+    margin-left: 0;
+    transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                opacity 0.3s ease,
+                margin-left 0.3s ease;
+}
+
+// Show text on hover
+.rss-action-btn-enhanced:hover .rss-action-btn-text {
+    max-width: 60px;
+    opacity: 1;
+    margin-left: 6px;
+}
