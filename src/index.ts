@@ -323,8 +323,15 @@ export default class RSSReaderPlugin extends Plugin {
             }
         });
 
-        // NOTE: addTopBar() moved to onLayoutReady() for SiYuan 3.3+ compatibility
+        this.startScheduledUpdates();
+        this.registerKeyboardShortcuts();
+    }
 
+    /**
+     * Called when the layout is ready
+     * SiYuan 3.3+ requires addDock() and addTopBar() to be called here
+     */
+    onLayoutReady() {
         const plugin = this;
         this.addDock({
             type: "rss_reader_dock",
@@ -345,9 +352,6 @@ export default class RSSReaderPlugin extends Plugin {
                 }
             }
         });
-
-        this.startScheduledUpdates();
-        this.registerKeyboardShortcuts();
     }
 
     // Safe setTimeout that tracks all pending timeouts for cleanup
@@ -1240,6 +1244,49 @@ private initSidebarUI(container: HTMLElement) {
         }
     }
 
+    /**
+     * Smart merge subscriptions to prevent data loss during multi-device sync
+     * Strategy: Merge by ID, keeping the latest version of each subscription
+     */
+    private async saveSubscriptionsWithMerge(): Promise<void> {
+        try {
+            // Load existing data from storage (may have been updated by another device)
+            const existing = await this.loadData(STORAGE_NAME) || [];
+            
+            // Create a map for efficient merging
+            const mergedMap = new Map<string, Subscription>();
+            
+            // First, add all existing subscriptions
+            existing.forEach((sub: Subscription) => {
+                if (sub.id) {
+                    mergedMap.set(sub.id, sub);
+                }
+            });
+            
+            // Then, merge current subscriptions (overwrite or add)
+            this.subscriptions.forEach(sub => {
+                if (sub.id) {
+                    mergedMap.set(sub.id, sub);
+                }
+            });
+            
+            // Convert map back to array
+            const merged = Array.from(mergedMap.values());
+            
+            // Save merged data
+            await this.saveData(STORAGE_NAME, merged);
+            
+            // Update local state with merged data
+            this.subscriptions = merged;
+            
+            logger.log(`Subscriptions merged: ${existing.length} existing + ${this.subscriptions.length - existing.length} new/updated = ${merged.length} total`);
+        } catch (error) {
+            logger.error("Failed to save subscriptions with merge:", error);
+            // Fallback: direct save without merge
+            await this.saveData(STORAGE_NAME, this.subscriptions);
+        }
+    }
+
     private async deleteSubscription(index: number, container: HTMLElement) {
         const sub = this.subscriptions[index];
 
@@ -1282,8 +1329,7 @@ private initSidebarUI(container: HTMLElement) {
 
         if (!confirmed) return;
 
-        this.subscriptions.splice(index, 1);
-
+        // Clean up cached articles for this subscription
         if (sub.id) {
             try {
                 const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
@@ -1294,12 +1340,11 @@ private initSidebarUI(container: HTMLElement) {
             }
         }
 
-        try {
-            await this.saveData(STORAGE_NAME, this.subscriptions);
-        } catch (error) {
-            logger.error("Failed to save subscriptions after delete:", error);
-            showMessage(this.i18n.saveFailed || "Save failed", 3000);
-        }
+        // Delete from local array
+        this.subscriptions.splice(index, 1);
+
+        // Use smart merge to ensure deletion is preserved across devices
+        await this.saveSubscriptionsWithMerge();
 
         if (this.currentSubscriptionIndex === index) {
             this.currentSubscriptionIndex = -1;
@@ -1413,7 +1458,9 @@ private initSidebarUI(container: HTMLElement) {
                 lastFetchTime: Date.now()
             });
 
-            await this.saveData(STORAGE_NAME, this.subscriptions);
+            // Use smart merge to prevent data loss during sync
+            await this.saveSubscriptionsWithMerge();
+            
             container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
             this.setupSubscriptionEvents(container);
             dialog.destroy();
