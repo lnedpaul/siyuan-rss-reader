@@ -42,6 +42,9 @@ interface Subscription {
     url: string;
     name: string;
     lastFetchTime?: number;
+    createdAt: number;
+    updatedAt: number;
+    deleted?: boolean;
 }
 
 interface RSSItem {
@@ -280,6 +283,23 @@ export default class RSSReaderPlugin extends Plugin {
 
         const data = await this.loadData(STORAGE_NAME);
         this.subscriptions = data || [];
+
+        // Migration: Add createdAt and updatedAt for old subscriptions without these fields
+        let migrated = false;
+        this.subscriptions.forEach(sub => {
+            if (sub.createdAt === undefined) {
+                sub.createdAt = sub.lastFetchTime || Date.now();
+                migrated = true;
+            }
+            if (sub.updatedAt === undefined) {
+                sub.updatedAt = sub.lastFetchTime || Date.now();
+                migrated = true;
+            }
+        });
+        if (migrated) {
+            logger.log("Migration: added createdAt/updatedAt to subscriptions");
+            await this.saveData(STORAGE_NAME, this.subscriptions);
+        }
 
         // Migration: remove 36kr (anti-bot blocks it) from saved subscriptions
         const before = this.subscriptions.length;
@@ -746,121 +766,19 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private setupSubscriptionEvents(container: HTMLElement) {
-        // Prevent duplicate event binding
-        if (this.subscriptionEventsBound) return;
+        if (this.subscriptionEventsBound) {
+            return;
+        }
         this.subscriptionEventsBound = true;
-        
-        const rssList = container.querySelector("#rssList");
-        if (!rssList) return;
 
-        // Setup hover/touch effects for all action buttons with rss-action-btn class
-        // Note: Enhanced buttons use CSS hover effects, no JS needed
-        const actionButtons = rssList.querySelectorAll('.rss-action-btn');
-        actionButtons.forEach(btn => {
-            const button = btn as HTMLElement;
-            
-            // Mouse events for desktop (only for simple buttons, not enhanced)
-            if (!button.classList.contains('rss-action-btn-enhanced')) {
-                button.addEventListener('mouseenter', () => {
-                    if (button.id === 'tbAdd') {
-                        button.style.borderColor = '#26c6da';
-                        button.style.color = '#26c6da';
-                    }
-                });
-                
-                button.addEventListener('mouseleave', () => {
-                    if (button.id === 'tbAdd') {
-                        button.style.borderColor = 'transparent';
-                        button.style.color = 'var(--b3-font-color-quaternary)';
-                    }
-                });
-                
-                // Touch events for mobile
-                button.addEventListener('touchstart', () => {
-                    if (button.id === 'tbAdd') {
-                        button.style.borderColor = '#26c6da';
-                        button.style.color = '#26c6da';
-                    }
-                }, { passive: true });
-                
-                button.addEventListener('touchend', () => {
-                    setTimeout(() => {
-                        if (button.id === 'tbAdd') {
-                            button.style.borderColor = 'transparent';
-                            button.style.color = 'var(--b3-font-color-quaternary)';
-                        }
-                    }, 150);
-                }, { passive: true });
-            }
-        });
-
-        // Handle hover effects with mouseover/mouseout (bubbling events)
-        // Also add touch support for mobile devices
-        
-        // Track which actions container is currently being hovered
-        let currentHoveringContainer: HTMLElement | null = null;
-        
-        rssList.addEventListener("mouseover", (e) => {
-            const target = e.target as HTMLElement;
-            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
-            const actionsContainer = target.closest(".subscription-actions");
-            
-            if (btn && actionsContainer) {
-                // Mark this container as hovering and highlight the button
-                currentHoveringContainer = actionsContainer as HTMLElement;
-                actionsContainer.classList.add('hovering');
-                this.applyButtonHoverEffect(btn as HTMLElement, true);
-            }
-        });
-
-        rssList.addEventListener("mouseout", (e) => {
-            const target = e.target as HTMLElement;
-            const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement;
-            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
-            const actionsContainer = target.closest(".subscription-actions");
-            
-            // Only process if we're leaving a button
-            if (btn && actionsContainer) {
-                // Check if we're leaving the entire subscription-actions container
-                if (!actionsContainer.contains(relatedTarget)) {
-                    // Left the container completely - reset everything
-                    actionsContainer.classList.remove('hovering');
-                    this.applyButtonHoverEffect(btn as HTMLElement, false);
-                    currentHoveringContainer = null;
-                } else if (!btn.contains(relatedTarget)) {
-                    // Moved to another button within the same container
-                    // Reset current button but keep hovering class
-                    this.applyButtonHoverEffect(btn as HTMLElement, false);
-                    // The new button's mouseover will handle adding effects
-                }
-            }
-        });
-
-        // Add touch event handlers for mobile devices
-        rssList.addEventListener("touchstart", (e) => {
-            const target = e.target as HTMLElement;
-            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
-            if (btn) {
-                this.applyButtonHoverEffect(btn as HTMLElement, true);
-            }
-        }, { passive: true });
-
-        rssList.addEventListener("touchend", (e) => {
-            const target = e.target as HTMLElement;
-            const btn = target.closest(".mark-read-rss, .refresh-rss, .delete-rss");
-            if (btn) {
-                // Delay to show feedback before resetting
-                setTimeout(() => {
-                    this.applyButtonHoverEffect(btn as HTMLElement, false);
-                }, 150);
-            }
-        }, { passive: true });
-
-        // Handle click events
-        rssList.addEventListener("click", (e) => {
+        container.addEventListener("click", (e) => {
             const target = e.target as HTMLElement;
             
-            // Handle add button click
+            const rssList = container.querySelector("#rssList");
+            if (!rssList || !rssList.contains(target)) {
+                return;
+            }
+            
             const addBtn = target.closest("#tbAdd");
             if (addBtn) {
                 e.stopPropagation();
@@ -868,7 +786,6 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
             
-            // Handle delete button click
             const deleteBtn = target.closest(".delete-rss");
             if (deleteBtn) {
                 e.stopPropagation();
@@ -877,7 +794,6 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
             
-            // Handle refresh button click
             const refreshBtn = target.closest(".refresh-rss");
             if (refreshBtn) {
                 e.stopPropagation();
@@ -886,7 +802,6 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
             
-            // Handle mark read button click
             const markReadBtn = target.closest(".mark-read-rss");
             if (markReadBtn) {
                 e.stopPropagation();
@@ -895,7 +810,6 @@ private initSidebarUI(container: HTMLElement) {
                 return;
             }
             
-            // Handle subscription item click (only if clicking on the name area)
             const nameArea = target.closest(".subscription-name");
             if (nameArea) {
                 const index = parseInt((nameArea as HTMLElement).dataset.index!);
@@ -1245,45 +1159,59 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     /**
-     * Smart merge subscriptions to prevent data loss during multi-device sync
-     * Strategy: Merge by ID, keeping the latest version of each subscription
+     * Timestamp-based merge for multi-device sync
+     * Strategy: 
+     * - DELETED always wins (if any device deleted, stay deleted)
+     * - Otherwise keep the version with latest updatedAt
+     * - Local changes (add/update) always preserved
+     * Leverages SiYuan's built-in sync mechanism
      */
     private async saveSubscriptionsWithMerge(): Promise<void> {
         try {
-            // Load existing data from storage (may have been updated by another device)
-            const existing = await this.loadData(STORAGE_NAME) || [];
-            
-            // Create a map for efficient merging
+            const existing: Subscription[] = await this.loadData(STORAGE_NAME) || [];
             const mergedMap = new Map<string, Subscription>();
-            
-            // First, add all existing subscriptions
+
+            // First, add all existing subscriptions to track what's in storage
             existing.forEach((sub: Subscription) => {
-                if (sub.id) {
+                if (sub.id) mergedMap.set(sub.id, sub);
+            });
+
+            // Then process current subscriptions
+            this.subscriptions.forEach((sub: Subscription) => {
+                if (!sub.id) return;
+                
+                // If current subscription is deleted, remove from merged result
+                if (sub.deleted) {
+                    mergedMap.delete(sub.id);
+                    return;
+                }
+                
+                // If not in storage yet, always add
+                const existingSub = mergedMap.get(sub.id);
+                if (!existingSub) {
+                    mergedMap.set(sub.id, sub);
+                    return;
+                }
+                
+                // If in storage and is deleted there, replace with new non-deleted one
+                // This allows re-adding a subscription that was previously deleted
+                if (existingSub.deleted) {
+                    mergedMap.set(sub.id, sub);
+                    return;
+                }
+                
+                // Both exist and neither is deleted - keep the newer version
+                if (sub.updatedAt > (existingSub.updatedAt || 0)) {
                     mergedMap.set(sub.id, sub);
                 }
             });
-            
-            // Then, merge current subscriptions (overwrite or add)
-            this.subscriptions.forEach(sub => {
-                if (sub.id) {
-                    mergedMap.set(sub.id, sub);
-                }
-            });
-            
-            // Convert map back to array
+
             const merged = Array.from(mergedMap.values());
-            
-            // Save merged data
             await this.saveData(STORAGE_NAME, merged);
-            
-            // Update local state with merged data
             this.subscriptions = merged;
-            
-            logger.log(`Subscriptions merged: ${existing.length} existing + ${this.subscriptions.length - existing.length} new/updated = ${merged.length} total`);
+            logger.log(`Subscriptions merged: ${existing.length} existing + ${this.subscriptions.length} local = ${merged.length} total`);
         } catch (error) {
-            logger.error("Failed to save subscriptions with merge:", error);
-            // Fallback: direct save without merge
-            await this.saveData(STORAGE_NAME, this.subscriptions);
+            logger.error("Failed to save subscriptions:", error);
         }
     }
 
@@ -1329,6 +1257,10 @@ private initSidebarUI(container: HTMLElement) {
 
         if (!confirmed) return;
 
+        // Mark subscription as deleted (soft delete for sync)
+        sub.deleted = true;
+        sub.updatedAt = Date.now();
+
         // Clean up cached articles for this subscription
         if (sub.id) {
             try {
@@ -1340,13 +1272,13 @@ private initSidebarUI(container: HTMLElement) {
             }
         }
 
-        // Delete from local array
-        this.subscriptions.splice(index, 1);
-
-        // Use smart merge to ensure deletion is preserved across devices
+        // Save with soft delete and sync
         await this.saveSubscriptionsWithMerge();
+        // Note: saveSubscriptionsWithMerge() already removes deleted subscriptions from this.subscriptions
 
-        if (this.currentSubscriptionIndex === index) {
+        // Check if the current selected subscription was deleted
+        if (this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex >= this.subscriptions.length) {
+            // Current subscription was deleted, reset selection
             this.currentSubscriptionIndex = -1;
             this.currentArticles = [];
             this.currentArticleIndex = -1;
@@ -1356,8 +1288,6 @@ private initSidebarUI(container: HTMLElement) {
             contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle}</div>`;
             const countEl = container.querySelector("#articleCount") as HTMLElement;
             if (countEl) countEl.textContent = "";
-        } else if (this.currentSubscriptionIndex > index) {
-            this.currentSubscriptionIndex--;
         }
 
         container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
@@ -1455,7 +1385,9 @@ private initSidebarUI(container: HTMLElement) {
                 id: `sub_${Date.now()}`,
                 url,
                 name: name || url,
-                lastFetchTime: Date.now()
+                lastFetchTime: Date.now(),
+                createdAt: Date.now(),
+                updatedAt: Date.now()
             });
 
             // Use smart merge to prevent data loss during sync
@@ -1989,8 +1921,9 @@ private initSidebarUI(container: HTMLElement) {
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
             
-        // Update last background fetch time
-        this.lastBackgroundFetchTime.set(sub.id, Date.now());
+        // Update last fetch time for sync
+        sub.lastFetchTime = Date.now();
+        sub.updatedAt = Date.now();
             
         return merged;
     }
@@ -2076,7 +2009,13 @@ private initSidebarUI(container: HTMLElement) {
     private async getCachedArticles(subId: string): Promise<Article[]> {
         const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
         const entry = cached[subId];
-        return entry ? entry.articles : [];
+        if (!entry) return [];
+        
+        // Apply read status from readStatus map to ensure consistency
+        return entry.articles.map(article => ({
+            ...article,
+            isRead: this.readStatus[article.id]?.isRead || article.isRead || false
+        }));
     }
 
     private async cacheArticles(subId: string, articles: Article[]) {
@@ -2803,7 +2742,7 @@ ${escaped}
 
     private showSettingsDialog(container: HTMLElement) {
         const dialog = new Dialog({
-            title: `? ${this.i18n.settings}`,
+            title: this.i18n.settings,
             content: `<div class="b3-dialog__content settings-panel" style="padding:16px;font-size:13px;">
                 <div class="b3-label">
                     <label>${this.i18n.articlesPerPage}</label>
