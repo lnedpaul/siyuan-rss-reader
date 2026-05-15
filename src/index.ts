@@ -159,6 +159,8 @@ export default class RSSReaderPlugin extends Plugin {
     private readonly CACHE_EXPIRY_MS = 5 * 60 * 1000;
     // Track last background fetch time per subscription to debounce rapid switches
     private lastBackgroundFetchTime: Map<string, number> = new Map();
+    // Unread counts cache per subscription (for badge display on subscription list)
+    private unreadCounts: Map<string, number> = new Map();
     // Performance metrics tracking
     private perfMetrics: {
         fetchCount: number;
@@ -674,6 +676,14 @@ private initSidebarUI(container: HTMLElement) {
 
         this.setupEventListeners(container);
         this.setupInfiniteScroll(container);
+        
+        // Load unread counts for badge display
+        this.updateUnreadCounts().then(() => {
+            const rssList = container.querySelector("#rssList");
+            if (rssList) {
+                rssList.innerHTML = this.renderSubscriptionListHTML();
+            }
+        });
     }
 
     private setupEventListeners(container: HTMLElement) {
@@ -722,10 +732,11 @@ private initSidebarUI(container: HTMLElement) {
                     <!-- Left border indicator (fixed width placeholder) -->
                     <div style="width:3px;flex-shrink:0;"></div>
                     <!-- Subscription name (clickable) -->
-                    <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;">
+                    <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;position:relative;">
                         <div style="font-size:${fs.listItem};font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
                             ${sub.name || sub.url}
                         </div>
+                        ${(this.unreadCounts.get(sub.id) ?? 0) > 0 ? `<span class="unread-badge">${this.unreadCounts.get(sub.id)}</span>` : ''}
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
                     <div class="subscription-actions">
@@ -1056,9 +1067,9 @@ private initSidebarUI(container: HTMLElement) {
 
     // ==================== Subscription Management ====================
 
-    private async selectSubscription(index: number, container: HTMLElement) {
-        // Prevent reloading if already selected
-        if (this.currentSubscriptionIndex === index) {
+    private async selectSubscription(index: number, container: HTMLElement, forceReload: boolean = false) {
+        // Prevent reloading if already selected (unless forceReload is true)
+        if (this.currentSubscriptionIndex === index && !forceReload) {
             logger.log("Subscription already selected, skipping reload");
             return;
         }
@@ -1109,6 +1120,13 @@ private initSidebarUI(container: HTMLElement) {
                     const unread = cached.filter(a => !a.isRead).length;
                     countEl.textContent = unread > 0 ? `${unread}/${cached.length}` : `${cached.length}`;
                 }
+                // Update unread badge
+                const cachedUnread = cached.filter((a: Article) => !a.isRead).length;
+                this.unreadCounts.set(sub.id, cachedUnread);
+                const listEl = container.querySelector("#rssList");
+                if (listEl) {
+                    listEl.innerHTML = this.renderSubscriptionListHTML();
+                }
                 this.renderArticleList(container);
                 this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
                 
@@ -1129,6 +1147,13 @@ private initSidebarUI(container: HTMLElement) {
                                 const unread = articles.filter(a => !a.isRead).length;
                                 countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
                             }
+                            // Update unread badge
+                            const unread = articles.filter((a: Article) => !a.isRead).length;
+                            this.unreadCounts.set(sub.id, unread);
+                            const listEl = container.querySelector("#rssList");
+                            if (listEl) {
+                                listEl.innerHTML = this.renderSubscriptionListHTML();
+                            }
                             this.renderArticleList(container);
                             this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
                         }
@@ -1144,6 +1169,13 @@ private initSidebarUI(container: HTMLElement) {
                 if (countEl) {
                     const unread = articles.filter(a => !a.isRead).length;
                     countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
+                }
+                // Update unread badge
+                const freshUnread = articles.filter((a: Article) => !a.isRead).length;
+                this.unreadCounts.set(sub.id, freshUnread);
+                const listEl = container.querySelector("#rssList");
+                if (listEl) {
+                    listEl.innerHTML = this.renderSubscriptionListHTML();
                 }
                 this.renderArticleList(container);
                 // Fix #5: Auto-load more if list doesn't fill the container
@@ -1270,6 +1302,7 @@ private initSidebarUI(container: HTMLElement) {
             } catch (error) {
                 logger.error("Failed to delete cached articles:", error);
             }
+            this.unreadCounts.delete(sub.id);
         }
 
         // Save with soft delete and sync
@@ -1645,7 +1678,7 @@ private initSidebarUI(container: HTMLElement) {
         // Mark as read (if needed) - use batch save
         if (this.settings.autoMarkRead && !article.isRead) {
             article.isRead = true;
-            this.markArticleRead(article.id);
+            this.markArticleRead(article.id, article.subscriptionId);
         }
 
         // Add 'selected' class to new item and update styles
@@ -1695,6 +1728,12 @@ private initSidebarUI(container: HTMLElement) {
 
         // Fix #2: Scroll to top when opening article
         contentEl.scrollTop = 0;
+
+        // Re-render subscription list to update unread badge
+        const rssList = container.querySelector("#rssList");
+        if (rssList) {
+            rssList.innerHTML = this.renderSubscriptionListHTML();
+        }
 
         // Fix: Use event delegation to avoid closure memory leak
         // Store current article in a weak reference instead of capturing in closure
@@ -2034,6 +2073,47 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     /**
+     * Update unread counts cache for all subscriptions
+     * Used to refresh badge numbers on subscription list items
+     */
+    private async updateUnreadCounts(subId?: string): Promise<void> {
+        try {
+            const cached: any = await this.loadData(CACHED_ARTICLES_NAME);
+            if (!cached || typeof cached !== 'object') {
+                logger.log(`updateUnreadCounts: No cached data found (${CACHED_ARTICLES_NAME})`);
+                return;
+            }
+            
+            if (subId) {
+                const entry = cached[subId];
+                if (entry?.articles) {
+                    const unread = entry.articles.filter((a: Article) => {
+                        const isRead = this.readStatus[a.id]?.isRead || a.isRead || false;
+                        return !isRead;
+                    }).length;
+                    this.unreadCounts.set(subId, unread);
+                    logger.log(`updateUnreadCounts: subId=${subId}, unread=${unread}`);
+                }
+            } else {
+                for (const id of Object.keys(cached)) {
+                    const entry = cached[id];
+                    if (entry?.articles) {
+                        const unread = entry.articles.filter((a: Article) => {
+                            const isRead = this.readStatus[a.id]?.isRead || a.isRead || false;
+                            return !isRead;
+                        }).length;
+                        this.unreadCounts.set(id, unread);
+                        logger.log(`updateUnreadCounts: id=${id}, unread=${unread}`);
+                    }
+                }
+                logger.log(`updateUnreadCounts: total subscriptions with counts = ${this.unreadCounts.size}`);
+            }
+        } catch (error) {
+            logger.error("Failed to update unread counts:", error);
+        }
+    }
+
+    /**
      * Batch save read status with debouncing
      * Collects all pending changes and saves them together to reduce I/O operations
      */
@@ -2069,10 +2149,20 @@ private initSidebarUI(container: HTMLElement) {
     /**
      * Mark article as read with batching support
      */
-    private markArticleRead(articleId: string): void {
+    private markArticleRead(articleId: string, subscriptionId?: string): void {
         const now = Date.now();
         this.pendingReadStatusChanges.set(articleId, { isRead: true, readAt: now });
         this.readStatus[articleId] = { isRead: true, readAt: now };
+        
+        // Update unread badge count for this subscription
+        if (subscriptionId) {
+            const current = this.unreadCounts.get(subscriptionId) ?? 0;
+            if (current > 0) {
+                this.unreadCounts.set(subscriptionId, current - 1);
+            } else {
+                this.unreadCounts.set(subscriptionId, 0);
+            }
+        }
         
         // Trigger batch save
         this.batchSaveReadStatus();
@@ -2227,6 +2317,13 @@ private initSidebarUI(container: HTMLElement) {
         
         if (this.currentSubscriptionIndex >= 0) {
             await this.cacheArticles(this.subscriptions[this.currentSubscriptionIndex].id, this.currentArticles);
+            // Update unread count badge
+            const currentSubId = this.subscriptions[this.currentSubscriptionIndex].id;
+            this.unreadCounts.set(currentSubId, 0);
+            const rssList = container.querySelector("#rssList");
+            if (rssList) {
+                rssList.innerHTML = this.renderSubscriptionListHTML();
+            }
         }
         this.renderArticleList(container, false);
         const countEl = container.querySelector("#articleCount") as HTMLElement;
@@ -2265,6 +2362,13 @@ private initSidebarUI(container: HTMLElement) {
             await this.cacheArticles(sub.id, articles);
             
             showMessage(`${this.i18n.markAllReadSuccess} (${markedCount})`, 2000);
+            
+            // Update unread count badge for this subscription
+            this.unreadCounts.set(sub.id, 0);
+            const rssList = container.querySelector("#rssList");
+            if (rssList) {
+                rssList.innerHTML = this.renderSubscriptionListHTML();
+            }
             
             // Always refresh article list if currently viewing this subscription
             // This ensures the UI reflects the updated read status immediately
@@ -2306,7 +2410,7 @@ private initSidebarUI(container: HTMLElement) {
             
             // If currently selected, refresh article list after fetching
             if (this.currentSubscriptionIndex === index && this.container) {
-                this.selectSubscription(index, this.container);
+                this.selectSubscription(index, this.container, true);
             }
         } catch (error) {
             showMessage(`${this.i18n.refreshFailed}: ${error}`);
@@ -2522,6 +2626,15 @@ private initSidebarUI(container: HTMLElement) {
             case "img": {
                 const src = el.getAttribute("src") || "";
                 const alt = el.getAttribute("alt") || "";
+                const cls = el.getAttribute("class") || "";
+                const width = el.getAttribute("width") || "";
+                const height = el.getAttribute("height") || "";
+                // Treat emoji/small icon images as inline text
+                if (/emoji|emojione|twemoji/.test(cls) || 
+                    (width && parseInt(width) <= 32) || 
+                    (height && parseInt(height) <= 32)) {
+                    return alt || "";
+                }
                 return src ? (`![${alt}](${src})\n`) : "";
             }
             case "ul":
@@ -2892,6 +3005,13 @@ ${escaped}
         c = c.replace(/javascript:/gi, '');
         // Fix: Remove extra img attributes style to prevent SiYuan AST parsing error
         c = c.replace(/<img(?![^>]*loading=)/gi, '<img loading="lazy" ');
+        // Replace emoji/small icon images with their alt text to prevent them becoming separate blocks
+        c = c.replace(/<img[^>]*class=["'][^"']*(?:emoji|emojione|twemoji|apple-emoji)[^"']*["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, '$1');
+        c = c.replace(/<img[^>]*(?:width|height)=["'](\d+)["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, (match, dim, alt) => {
+            const dimNum = parseInt(dim);
+            if (dimNum <= 32) return alt;
+            return match;
+        });
         return c;
     }
 

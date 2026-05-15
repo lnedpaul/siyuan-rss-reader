@@ -5,6 +5,35 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.19] - 2026-05-15
+
+### 修复
+
+- **删除订阅项 bug**: 修复删除一个订阅项却删除了两个的问题 - 移除 `deleteSubscription` 中多余的 `splice()` 调用，`saveSubscriptionsWithMerge()` 已内部处理软删除逻辑
+- **刷新不实时更新**: 修复刷新按钮点击后文章列表没有实时刷新的问题 - 在 `selectSubscription` 中添加 `forceReload` 参数
+- **设置窗口标题**: 修复设置窗口标题显示 `? 设置` 的问题 - 移除标题中的 `?` 前缀
+- **保存笔记按钮样式**: 修复图标未居中且悬停长度偏短的问题 - 默认 `justify-content: center`，hover 时展开至 110px
+- **Emoji 保存问题**: 修复 Emoji 图标保存到思源后作为图片单独占数据块的问题 - 在 `sanitizeHTML` 和 `_nodeToMarkdown` 中双重防护，将 Emoji/小图标替换为纯文本 alt
+- **删除订阅未清理红点**: 修复删除订阅项后未清理 `unreadCounts` 的问题 - 添加 `this.unreadCounts.delete(sub.id)` 清理已删除订阅的未读计数
+- **批量标记已读计数错误**: 修复批量标记已读时 `unreadCounts` 重复递减的问题 - `markAllRead` 和 `markSubscriptionRead` 中不传 `subscriptionId`，由最后的 `set(0)` 统一处理
+
+### 新增
+
+- **未读红点功能**: 在订阅项左上方实时显示未读条数的红点
+  - 初始化时异步加载未读计数
+  - 选择、刷新、阅读、标记已读等场景实时更新红点
+  - 无未读条目时红点自动消失
+- **多设备已读状态同步**: 已读状态 (`readStatus`) 通过思源笔记同步机制在多设备间同步
+  - 使用 `readStatus` 键存储已读状态数据
+  - 防抖批量保存（1 秒防抖）减少 I/O 操作
+  - 每次读取时合并本地与存储中的已读状态
+
+### 改进
+
+- **订阅项同步增强**: 添加订阅项和未读/已读条目状态已跟随时间戳 + 软删除方案同步到多设备
+- **保存笔记按钮动画**: 统一保存笔记按钮的悬停动画与添加按钮风格一致，使用主题色并增加文字提示
+- **按钮颜色统一**: 所有操作按钮使用 `var(--b3-theme-primary)` 主题色，悬停时使用 `var(--b3-theme-primary-light)`
+
 ## [0.1.18] - 2026-05-12
 
 ### 修复
