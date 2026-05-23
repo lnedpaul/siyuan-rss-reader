@@ -53,6 +53,7 @@ interface RSSItem {
     pubDate: string;
     content: string;
     description: string;
+    author?: string;
 }
 
 interface Article extends RSSItem {
@@ -98,6 +99,10 @@ interface Settings {
     fontSize: number; // 12-20px
     autoRefreshInterval: number;
     lastUsedNotebookId?: string;
+    useTemplate: boolean;
+    templateShowLink: boolean;
+    templateShowSiteName: boolean;
+    templateShowDateTime: boolean;
 }
 
 const defaultSettings: Settings = {
@@ -109,6 +114,10 @@ const defaultSettings: Settings = {
     fontSize: 14,
     autoRefreshInterval: 0,
     lastUsedNotebookId: "",
+    useTemplate: false,
+    templateShowLink: true,
+    templateShowSiteName: true,
+    templateShowDateTime: true,
 };
 
 const SHORTCUTS = {
@@ -538,10 +547,39 @@ export default class RSSReaderPlugin extends Plugin {
 
     private handleKeyboard(e: KeyboardEvent) {
         if (!this.container || !this.settings.enableKeyboardShortcuts) return;
-        // Ignore keyboard shortcuts when typing in input/textarea/select
-        if ((e.target as HTMLElement).tagName === 'INPUT' ||
-            (e.target as HTMLElement).tagName === 'TEXTAREA' ||
-            (e.target as HTMLElement).tagName === 'SELECT') {
+        
+        const target = e.target as HTMLElement;
+        
+        // ========== 混合方案：智能判断 ==========
+        
+        // 1. 排除标准输入元素
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+            return;
+        }
+        
+        // 2. 排除思源笔记编辑器区域（方案一）- 这是最重要的判断
+        if (target.closest('.protyle-wysiwyg')) {
+            return;
+        }
+        
+        // 3. 排除代码块区域
+        if (target.closest('.code-block') || target.closest('pre')) {
+            return;
+        }
+        
+        // 4. 排除可编辑区域
+        if (target.isContentEditable || target.parentElement?.isContentEditable) {
+            return;
+        }
+        
+        // 5. 检查面板是否可见（使用更可靠的检测方法）
+        const isPanelVisible = this.isDockPanelVisible();
+        
+        // 6. 检查焦点是否在面板内
+        const isInPanel = this.container.contains(target);
+        
+        // 简化逻辑：只要面板可见或者焦点在面板内，就响应快捷键（已经排除了编辑器区域）
+        if (!isPanelVisible && !isInPanel) {
             return;
         }
 
@@ -554,6 +592,46 @@ export default class RSSReaderPlugin extends Plugin {
             case SHORTCUTS.MARK_ALL_READ: e.preventDefault(); if (this.container) this.markAllRead(this.container); break;
             case SHORTCUTS.HELP: e.preventDefault(); this.showHelpDialog(); break;
         }
+    }
+    
+    /**
+     * 检测 Dock 面板是否可见
+     * 使用多种方法确保准确性
+     */
+    private isDockPanelVisible(): boolean {
+        // 方法1：检查容器元素
+        if (!this.container) return false;
+        
+        // 检查容器是否可见
+        const containerStyle = window.getComputedStyle(this.container);
+        if (containerStyle.display === 'none' || containerStyle.visibility === 'hidden') {
+            return false;
+        }
+        
+        // 方法2：检查 Dock 面板元素
+        const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
+        if (dockPanel) {
+            const panelStyle = window.getComputedStyle(dockPanel);
+            if (panelStyle.display === 'none' || panelStyle.visibility === 'hidden') {
+                return false;
+            }
+            // 检查是否有隐藏类
+            if (dockPanel.classList.contains('fn__none') || dockPanel.classList.contains('dock--hide')) {
+                return false;
+            }
+        }
+        
+        // 方法3：检查容器的父元素链
+        let parent = this.container.parentElement;
+        while (parent) {
+            const parentStyle = window.getComputedStyle(parent);
+            if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden') {
+                return false;
+            }
+            parent = parent.parentElement;
+        }
+        
+        return true;
     }
 
     // Get font size CSS value based on numeric fontSize setting (12-20px)
@@ -2404,17 +2482,146 @@ private initSidebarUI(container: HTMLElement) {
         
         try {
             const sub = this.subscriptions[index];
-            await this.fetchAndCacheArticles(sub);
+            
+            // Get new articles
+            const feed = await this.fetchWithRetry(sub, 3);
+            const cached = await this.getCachedArticles(sub.id);
+            
+            // Convert new articles
+            const newArticles = feed.items.map(item => ({
+                ...item,
+                id: this.generateArticleId(item.link),
+                subscriptionId: sub.id,
+                isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
+                cachedAt: Date.now(),
+                thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
+            } as Article));
+            
+            // Merge articles (preserve read status)
+            const merged = this.mergeArticles(newArticles, cached);
+            await this.cacheArticles(sub.id, merged);
+            
+            sub.lastFetchTime = Date.now();
+            sub.updatedAt = Date.now();
+            
+            // Incremental UI update
+            await this.updateUIAfterRefresh(index, container, merged, cached);
             
             showMessage(this.i18n.refreshSuccess, 1500);
             
-            // If currently selected, refresh article list after fetching
-            if (this.currentSubscriptionIndex === index && this.container) {
-                this.selectSubscription(index, this.container, true);
-            }
         } catch (error) {
             showMessage(`${this.i18n.refreshFailed}: ${error}`);
         }
+    }
+    
+    // Incremental UI update after refresh
+    private async updateUIAfterRefresh(index: number, container: HTMLElement, merged: Article[], cached: Article[]) {
+        if (this.currentSubscriptionIndex !== index || !this.container) {
+            return;
+        }
+        
+        // Save current reading state
+        const currentArticleId = this.currentArticles[this.currentArticleIndex]?.id;
+        const wasReading = currentArticleId !== undefined;
+        
+        // Update articles
+        this.currentArticles = merged;
+        
+        // Update unread count
+        const unread = merged.filter((a: Article) => !a.isRead).length;
+        this.unreadCounts.set(this.subscriptions[index].id, unread);
+        
+        // Update subscription list UI
+        const listEl = container.querySelector("#rssList");
+        if (listEl) {
+            listEl.innerHTML = this.renderSubscriptionListHTML();
+        }
+        
+        // Update article count
+        const countEl = container.querySelector("#articleCount") as HTMLElement;
+        if (countEl) {
+            countEl.textContent = unread > 0 ? `${unread}/${merged.length}` : `${merged.length}`;
+        }
+        
+        // Try to maintain reading state
+        if (wasReading && merged.length > 0) {
+            if (currentArticleId) {
+                const newIndex = merged.findIndex(a => a.id === currentArticleId);
+                if (newIndex >= 0) {
+                    // Article still exists, maintain reading
+                    this.currentArticleIndex = newIndex;
+                    this.renderArticleList(container, false);
+                } else {
+                    // Article removed, select first
+                    this.currentArticleIndex = 0;
+                    this.selectArticle(0, container);
+                }
+            }
+        } else {
+            // No article being read, just update list
+            this.renderArticleList(container, false);
+        }
+    }
+    
+    private extractThumbnail(content: string): string {
+        const imgMatch = content.match(/<img[^>]+src=["']([^'"]+)["']/i);
+        return imgMatch ? imgMatch[1] : '';
+    }
+    
+    private applyTemplate(article: Article, content: string, fileName: string, tags: string = "", showLink: boolean = true, showSiteName: boolean = true, showDateTime: boolean = true): string {
+        if (!this.settings.useTemplate) {
+            // Default format
+            let metaLines: string[] = [];
+            if (article.pubDate) {
+                metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
+            }
+            if (article.link) {
+                metaLines.push(`> [Original link](${article.link})`);
+            }
+            return [
+                `# ${fileName}`,
+                ...metaLines,
+                "",
+                content
+            ].join("\n");
+        }
+        
+        // Get subscription name
+        const subscription = this.subscriptions.find(s => s.id === article.subscriptionId);
+        const siteName = subscription?.name || "";
+        
+        // Format date and time
+        const now = new Date();
+        const date = now.toISOString().split('T')[0]; // yyyy-MM-dd
+        const time = now.toTimeString().slice(0, 5); // HH:mm
+        
+        // Build content based on user choices
+        const lines: string[] = [];
+        
+        // Top separator
+        lines.push("---");
+        
+        // Meta info lines
+        if (showSiteName && siteName) {
+            lines.push(`订阅源：${siteName}`);
+        }
+        
+        if (showDateTime) {
+            lines.push(`日期：${date} ${time}`);
+        }
+        
+        if (showLink && article.link) {
+            lines.push(`链接：[${article.link}](${article.link})`);
+        }
+        
+        // Bottom separator
+        lines.push("---");
+        lines.push("");
+        
+        // Content
+        lines.push(content);
+        
+        return lines.join("\n");
     }
 
     private async refreshCurrentFeed(container: HTMLElement) {
@@ -2438,8 +2645,9 @@ private initSidebarUI(container: HTMLElement) {
             }
 
             // Show notebook selection dialog
-            const targetNbId = await this.showNotebookSelectionDialog(openNotebooks);
-            if (!targetNbId) return; // User cancelled selection
+            const result = await this.showNotebookSelectionDialog(openNotebooks);
+            if (!result) return; // User cancelled selection
+            const { notebookId, tags, showLink, showSiteName, showDateTime } = result;
 
             let fileName = article.title
                 .replace(/[/\\:*?"<>|]/g, " ")
@@ -2455,30 +2663,16 @@ private initSidebarUI(container: HTMLElement) {
             const articleMarkdown = this.htmlToMarkdown(articleHTML);
             logger.log("Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
 
-            // Metadata lines
-            let metaLines: string[] = [];
-            if (article.pubDate) {
-                metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
-            }
-            if (article.link) {
-                metaLines.push(`> [Original link](${article.link})`);
-            }
+            // Apply template
+            const fullMd = this.applyTemplate(article, articleMarkdown, fileName, tags, showLink, showSiteName, showDateTime);
 
-            // Prepare the final Markdown, one-time write to avoid insertBlock issues
-            const fullMd = [
-                `# ${fileName}`,
-                ...metaLines,
-                "",
-                articleMarkdown
-            ].join("\n");
-
-            showMessage(`${this.i18n.savingTo}: ${openNotebooks.find((n: any) => n.id === targetNbId)?.name || ""}...`, 2000);
+            showMessage(`${this.i18n.savingTo}: ${openNotebooks.find((n: any) => n.id === notebookId)?.name || ""}...`, 2000);
 
             logger.log("Full markdown length:", fullMd.length, "preview:", fullMd.substring(0, 300));
 
             // Step 1: Create the document and write all content at once
             const res = await fetchSyncPost("/api/filetree/createDocWithMd", {
-                notebook: targetNbId,
+                notebook: notebookId,
                 path: `/${fileName}`,
                 markdown: fullMd
             });
@@ -2488,9 +2682,9 @@ private initSidebarUI(container: HTMLElement) {
                 // File already exists, use unique suffix
                 const uniqueName = `${fileName}_${Date.now().toString(36)}`;
                 const res2 = await fetchSyncPost("/api/filetree/createDocWithMd", {
-                    notebook: targetNbId,
+                    notebook: notebookId,
                     path: `/${uniqueName}`,
-                    markdown: fullMd.replace(`# ${fileName}`, `# ${uniqueName}`)
+                    markdown: fullMd.replace(new RegExp(`# ${fileName}`, 'g'), `# ${uniqueName}`)
                 });
                 if (!res2.data) {
                     showMessage(`${this.i18n.saveFailed}: ${this.i18n.docExists}`, 3000);
@@ -2515,7 +2709,7 @@ private initSidebarUI(container: HTMLElement) {
             }
 
             // Step 4: Record last used notebook
-            this.settings.lastUsedNotebookId = targetNbId;
+            this.settings.lastUsedNotebookId = notebookId;
             await this.saveSettings();
 
             logger.log("Save complete:", fileName);
@@ -2747,19 +2941,53 @@ ${escaped}
 
     private async refreshAllFeeds(container: HTMLElement) {
         showMessage(this.i18n.refreshing, 2000);
+        
+        let hasNewArticles = false;
+        
         for (const sub of this.subscriptions) {
-            try { await this.fetchAndCacheArticles(sub); }
-            catch (e) { /* silent */ }
+            try {
+                const feed = await this.fetchWithRetry(sub, 3);
+                const cached = await this.getCachedArticles(sub.id);
+                
+                const newArticles = feed.items.map(item => ({
+                    ...item,
+                    id: this.generateArticleId(item.link),
+                    subscriptionId: sub.id,
+                    isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
+                    cachedAt: Date.now(),
+                    thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
+                } as Article));
+                
+                const merged = this.mergeArticles(newArticles, cached);
+                
+                // Check if there are new articles
+                if (merged.length > cached.length) {
+                    hasNewArticles = true;
+                }
+                
+                await this.cacheArticles(sub.id, merged);
+                sub.lastFetchTime = Date.now();
+                sub.updatedAt = Date.now();
+                
+            } catch (e) { 
+                /* silent */ 
+            }
         }
-        if (this.currentSubscriptionIndex >= 0)
-            this.selectSubscription(this.currentSubscriptionIndex, container);
-        showMessage(this.i18n.refreshSuccess, 2000);
+        
+        // Only update UI if there are new articles
+        if (hasNewArticles && this.currentSubscriptionIndex >= 0 && this.container) {
+            const sub = this.subscriptions[this.currentSubscriptionIndex];
+            const merged = await this.getCachedArticles(sub.id);
+            await this.updateUIAfterRefresh(this.currentSubscriptionIndex, container, merged, []);
+        }
+        
+        showMessage(hasNewArticles ? this.i18n.newArticles || this.i18n.refreshSuccess : this.i18n.refreshSuccess, 2000);
     }
 
     // ==================== Dialogs ====================
 
     // Notebook selection dialog
-    private async showNotebookSelectionDialog(notebooks: any[]): Promise<string | null> {
+    private async showNotebookSelectionDialog(notebooks: any[]): Promise<{ notebookId: string; tags: string; showLink: boolean; showSiteName: boolean; showDateTime: boolean } | null> {
         return new Promise((resolve) => {
             const dialog = new Dialog({
                 title: `${this.i18n.selectNotebook || 'Select Notebook'}`,
@@ -2776,15 +3004,48 @@ ${escaped}
                             ${this.i18n.rememberChoice || 'Remember choice'}
                         </label>
                     </div>
+                    
+                    <div style="margin-top:16px;">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                            <input type="checkbox" class="b3-switch" id="useTemplate" ${this.settings.useTemplate ? 'checked' : ''}>
+                            ${this.i18n.useTemplate || 'Use template'}
+                        </label>
+                    </div>
+                    
+                    <div id="templateOptionsSection" style="${this.settings.useTemplate ? '' : 'display:none;margin-top:16px;'}">
+                        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                                <input type="checkbox" class="template-option" id="templateShowSiteName" ${this.settings.templateShowSiteName ? 'checked' : ''}>
+                                订阅源名称
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                                <input type="checkbox" class="template-option" id="templateShowDateTime" ${this.settings.templateShowDateTime ? 'checked' : ''}>
+                                保存日期时间
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                                <input type="checkbox" class="template-option" id="templateShowLink" ${this.settings.templateShowLink ? 'checked' : ''}>
+                                原文链接
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="b3-dialog__action">
                     <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
                     <div class="fn__space"></div>
                     <button type="button" class="b3-button b3-button--text" id="confirmNotebook">${this.i18n.confirm}</button>
                 </div>`,
-                width: "400px",
+                width: "500px",
             });
             requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
+
+            // Toggle template options section
+            const useTemplateCheckbox = dialog.element.querySelector("#useTemplate") as HTMLInputElement;
+            const templateOptionsSection = dialog.element.querySelector("#templateOptionsSection") as HTMLElement;
+            if (useTemplateCheckbox && templateOptionsSection) {
+                useTemplateCheckbox.addEventListener("change", () => {
+                    templateOptionsSection.style.display = useTemplateCheckbox.checked ? '' : 'none';
+                });
+            }
 
             (dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement).onclick = () => {
                 dialog.destroy();
@@ -2795,6 +3056,19 @@ ${escaped}
                 const select = dialog.element.querySelector("#notebookSelect") as HTMLSelectElement;
                 const remember = (dialog.element.querySelector("#rememberNotebook") as HTMLInputElement).checked;
                 const notebookId = select.value;
+                const useTemplate = (dialog.element.querySelector("#useTemplate") as HTMLInputElement).checked;
+                
+                // Get template options
+                const showLink = (dialog.element.querySelector("#templateShowLink") as HTMLInputElement)?.checked ?? true;
+                const showSiteName = (dialog.element.querySelector("#templateShowSiteName") as HTMLInputElement)?.checked ?? true;
+                const showDateTime = (dialog.element.querySelector("#templateShowDateTime") as HTMLInputElement)?.checked ?? true;
+                
+                // Save template settings
+                this.settings.useTemplate = useTemplate;
+                this.settings.templateShowLink = showLink;
+                this.settings.templateShowSiteName = showSiteName;
+                this.settings.templateShowDateTime = showDateTime;
+                this.saveSettings();
                 
                 if (remember) {
                     this.settings.lastUsedNotebookId = notebookId;
@@ -2802,9 +3076,15 @@ ${escaped}
                 }
                 
                 dialog.destroy();
-                resolve(notebookId);
+                resolve({ notebookId, tags: "", showLink, showSiteName, showDateTime });
             });
         });
+    }
+    
+    private escapeHtml(str: string): string {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     private showHelpDialog() {
@@ -2943,7 +3223,6 @@ ${escaped}
             dialog.destroy();
         });
     }
-
     // Only for UI display - adds responsive styles (not for markdown conversion)
     private sanitizeHTMLForDisplay(html: string): string {
         let c = this.sanitizeHTML(html);
