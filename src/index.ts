@@ -3,6 +3,7 @@ import {
     showMessage,
     Dialog,
     fetchSyncPost,
+    openTab,
 } from "siyuan";
 
 import "./index.scss";
@@ -184,10 +185,12 @@ export default class RSSReaderPlugin extends Plugin {
         renderCount: 0,
         totalRenderTime: 0
     };
-    // MutationObserver instances for cleanup
-    private themeObserver: MutationObserver | null = null;
+        // MutationObserver instances for cleanup
     // Track if help dialog is currently open to prevent duplicates
     private isHelpDialogOpen: boolean = false;
+    // Track the opened RSS Reader tab for cleanup
+    private rssTab: any = null;
+    private rssTabOpen: boolean = false;
 
     // ==================== Icon Registration ====================
 
@@ -286,16 +289,53 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== Lifecycle ====================
 
     async onload() {
+        // Must be called synchronously (before any await) per SiYuan API requirement
+        this.boundHandleKeyboard = this.handleKeyboard.bind(this);
+        this.registerCustomIcons();
 
+        const plugin = this;
+        this.addTab({
+            type: TAB_TYPE,
+            beforeDestroy: function () {
+            },
+            destroy: function () {
+                plugin.rssTab = null;
+                plugin.rssTabOpen = false;
+                plugin.container = null;
+            },
+            resize: function () {
+            },
+            init: function (this: any) {
+                try {
+                    const container = this.element as HTMLElement;
+                    if (container) {
+                        plugin.container = container;
+                        plugin.initSidebarUI(container);
+                    } else {
+                        logger.error("[RSS] Tab container element is null");
+                    }
+                } catch (err) {
+                    logger.error("[RSS] Tab init error:", err);
+                }
+            }
+        });
+
+        this.addCommand({
+            langKey: "openRssReader",
+            hotkey: "",
+            callback: () => {
+                plugin.openOrSwitchToRssTab();
+            }
+        });
+
+        // Now safe to do async operations
         await this.loadSettings();
         
-        // Fix #3: Auto-detect SiYuan language setting
         this.detectLanguage();
 
         const data = await this.loadData(STORAGE_NAME);
         this.subscriptions = data || [];
 
-        // Migration: Add createdAt and updatedAt for old subscriptions without these fields
         let migrated = false;
         this.subscriptions.forEach(sub => {
             if (sub.createdAt === undefined) {
@@ -312,7 +352,6 @@ export default class RSSReaderPlugin extends Plugin {
             await this.saveData(STORAGE_NAME, this.subscriptions);
         }
 
-        // Migration: remove 36kr (anti-bot blocks it) from saved subscriptions
         const before = this.subscriptions.length;
         this.subscriptions = this.subscriptions.filter(s => !s.url.includes("36kr.com"));
         if (this.subscriptions.length < before) {
@@ -323,36 +362,30 @@ export default class RSSReaderPlugin extends Plugin {
         const status = await this.loadData(READ_STATUS_NAME);
         this.readStatus = status || {};
 
-        // Clean up stale and orphaned cache entries
         await this.migrateCacheFormat();
         await this.cleanupCache();
-        
-        // Clean up old read status entries (keep last 30 days)
         await this.cleanupReadStatus();
 
-        this.boundHandleKeyboard = this.handleKeyboard.bind(this);
-
-        // Register custom icons for the plugin
-        this.registerCustomIcons();
-
-        // Register command to show plugin menu item in command palette
-        this.addCommand({
-            langKey: "openRssReader",
-            hotkey: "",
-            callback: () => {
-                // Toggle the dock panel visibility
-                const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
-                if (dockPanel) {
-                    // Dock is visible, hide it by triggering SiYuan's minimize
-                    const minBtn = dockPanel.querySelector('[data-type="min"]') as HTMLElement;
-                    if (minBtn) minBtn.click();
-                } else {
-                    // Dock is not visible, show it by clicking the dock icon button in bottom bar
-                    const dockIconBtn = document.querySelector('.dock__item[data-type="rss_reader_dock"]') as HTMLElement;
-                    if (dockIconBtn) dockIconBtn.click();
-                }
+        // Pre-populate unread counts from cached data so badges are ready when tab opens
+        const cachedArticles: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+        for (const subId of Object.keys(cachedArticles)) {
+            const entry = cachedArticles[subId];
+            if (entry?.articles) {
+                const unread = entry.articles.filter((a: Article) =>
+                    !(this.readStatus[a.id]?.isRead || a.isRead || false)
+                ).length;
+                this.unreadCounts.set(subId, unread);
             }
-        });
+        }
+
+        // Refresh UI if tab already opened before data was loaded
+        if (this.container?.isConnected) {
+            const rssList = this.container.querySelector("#rssList");
+            if (rssList) {
+                rssList.innerHTML = this.renderSubscriptionListHTML();
+            }
+            this.updateUnreadCounts();
+        }
 
         this.startScheduledUpdates();
         this.registerKeyboardShortcuts();
@@ -364,23 +397,129 @@ export default class RSSReaderPlugin extends Plugin {
      */
     onLayoutReady() {
         const plugin = this;
-        this.addDock({
-            type: "rss_reader_dock",
-            config: {
-                position: "RightBottom",
-                size: { width: 400, height: 300 },
-                icon: "iconRSSMain",
-                title: this.i18n.rssReader,
-            },
-            data: {},
-            init: function (this: any, dock: any) {
+        
+        // Add top bar icon for opening RSS Reader in a tab
+        this.addTopBar({
+            icon: "iconRSSMain",
+            title: this.i18n.rssReader || "RSS Reader",
+            position: "right",
+            callback: () => {
+                plugin.openOrSwitchToRssTab();
+            }
+        });
+    }
+
+    /**
+     * Open RSS Reader tab or switch to existing one if already open
+     */
+    private async openOrSwitchToRssTab(): Promise<void> {
+        const rssTabTitle = this.i18n.rssReader || "RSS Reader";
+        
+        if (!this.app) {
+            logger.error("[RSS] Plugin not initialized properly");
+            showMessage(this.i18n.error || "插件未初始化", 3000);
+            return;
+        }
+        
+        // Check stored tab reference first (must be connected to DOM)
+        if (this.rssTabOpen && this.rssTab) {
+            const headEl = this.rssTab.headElement;
+            if (headEl && headEl.isConnected) {
                 try {
-                    plugin.container = this.element;
-                    plugin.initSidebarUI(this.element);
-                    // Toolbar is now built into the title bar (initSidebarUI), no need for separate dock header injection
+                    headEl.click();
+                    logger.log("[RSS] Switched to existing tab");
+                    return;
                 } catch (err) {
-                    logger.error("[RSS] Dock init error:", err);
+                    logger.warn("[RSS] Stored tab no longer valid, opening new one");
                 }
+            } else {
+                logger.log("[RSS] Stored tab was closed externally");
+            }
+            this.rssTab = null;
+            this.rssTabOpen = false;
+            // Fall through to open a new tab
+        }
+        
+        // Fallback: check getOpenedTab for existing tabs
+        const openedTabs = this.getOpenedTab();
+        for (const key in openedTabs) {
+            if (key.includes(TAB_TYPE)) {
+                const customs = openedTabs[key];
+                if (customs.length > 0 && customs[0].tab && customs[0].tab.headElement) {
+                    this.rssTab = customs[0].tab;
+                    this.rssTabOpen = true;
+                    customs[0].tab.headElement.click();
+                    logger.log("[RSS] Switched to existing tab via getOpenedTab");
+                    return;
+                }
+            }
+        }
+        
+        // Open new tab
+        try {
+            logger.log("[RSS] Opening new tab");
+            const tab = await openTab({
+                app: this.app,
+                custom: {
+                    id: "siyuan-rss-reader." + TAB_TYPE,
+                    icon: "iconRSSMain",
+                    title: rssTabTitle,
+                },
+                keepCursor: true,
+            });
+            this.rssTab = tab;
+            this.rssTabOpen = true;
+
+            // Direct content rendering (fallback if addTab init didn't fire)
+            this.ensureTabContent(tab);
+        } catch (err) {
+            logger.error("[RSS] Failed to open tab:", err);
+            showMessage(this.i18n.error || "打开标签页失败", 3000);
+        }
+    }
+
+    /**
+     * Ensure tab has content rendered. Called after openTab.
+     * Works both as fallback if addTab init failed, and as primary renderer.
+     */
+    private ensureTabContent(tab: any): void {
+        // Wait for DOM to settle
+        requestAnimationFrame(() => {
+            if (this.container && this.container.isConnected) return;
+
+            // 1. Try via getOpenedTab (works if addTab was registered correctly)
+            const openedTabs = this.getOpenedTab();
+            for (const key in openedTabs) {
+                if (key.includes(TAB_TYPE)) {
+                    for (const custom of openedTabs[key]) {
+                        if (custom?.element && custom.element.isConnected) {
+                            this.container = custom.element as HTMLElement;
+                            this.initSidebarUI(this.container);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // 2. Try via tab.model (Custom instance attached to the tab)
+            const model = tab?.model as any;
+            if (model?.element && model.element.isConnected) {
+                this.container = model.element as HTMLElement;
+                this.initSidebarUI(this.container);
+                return;
+            }
+
+            // 3. Last resort: look for custom content container in the tab's panel
+            const panel = tab?.panelElement as HTMLElement;
+            if (panel) {
+                const contentDiv = document.createElement("div");
+                contentDiv.style.width = "100%";
+                contentDiv.style.height = "100%";
+                contentDiv.style.display = "flex";
+                contentDiv.style.flexDirection = "column";
+                panel.appendChild(contentDiv);
+                this.container = contentDiv;
+                this.initSidebarUI(contentDiv);
             }
         });
     }
@@ -435,18 +574,14 @@ export default class RSSReaderPlugin extends Plugin {
                 this.readStatus[articleId] = status;
             }
             this.pendingReadStatusChanges.clear();
-            // Note: saveData is async, but we can't await in onunload
-            // The changes are already applied to readStatus object
+            // Fire-and-forget save: persist read status before unload
+            this.saveData(READ_STATUS_NAME, this.readStatus).catch(err =>
+                logger.error("[Unload] Failed to save read status:", err)
+            );
         }
         
         // Cancel all pending network requests
         this.pendingRequests.clear();
-        
-        // Disconnect MutationObservers to prevent memory leaks
-        if (this.themeObserver) {
-            this.themeObserver.disconnect();
-            this.themeObserver = null;
-        }
         
         // Log performance metrics in debug mode
         if (DEBUG) {
@@ -475,6 +610,40 @@ export default class RSSReaderPlugin extends Plugin {
             const articleList = this.container.querySelector("#rssArticleList");
             if (articleList && this.listScrollHandler) {
                 articleList.removeEventListener("scroll", this.listScrollHandler);
+            }
+        }
+        
+        // Close all RSS Reader tabs when plugin is unloaded
+        this.closeAllRssTabs();
+    }
+
+    /**
+     * Close all open RSS Reader tabs
+     */
+    private closeAllRssTabs(): void {
+        if (this.rssTab) {
+            try {
+                this.rssTab.close();
+            } catch (err) {
+                logger.error("[RSS] Failed to close stored tab:", err);
+            }
+            this.rssTab = null;
+            this.rssTabOpen = false;
+        }
+        
+        const openedTabs = this.getOpenedTab();
+        for (const key in openedTabs) {
+            if (key.includes(TAB_TYPE)) {
+                for (const custom of openedTabs[key]) {
+                    try {
+                        if (custom.tab) {
+                            custom.tab.close();
+                            this.rssTabOpen = false;
+                        }
+                    } catch (err) {
+                        logger.error("[RSS] Failed to close tab:", err);
+                    }
+                }
             }
         }
     }
@@ -573,7 +742,7 @@ export default class RSSReaderPlugin extends Plugin {
         }
         
         // 5. 检查面板是否可见（使用更可靠的检测方法）
-        const isPanelVisible = this.isDockPanelVisible();
+        const isPanelVisible = this.isRssTabVisible();
         
         // 6. 检查焦点是否在面板内
         const isInPanel = this.container.contains(target);
@@ -595,33 +764,20 @@ export default class RSSReaderPlugin extends Plugin {
     }
     
     /**
-     * 检测 Dock 面板是否可见
+     * 检测 RSS Reader 标签页是否可见
      * 使用多种方法确保准确性
      */
-    private isDockPanelVisible(): boolean {
-        // 方法1：检查容器元素
+    private isRssTabVisible(): boolean {
+        // 方法1：检查容器元素是否存在
         if (!this.container) return false;
         
-        // 检查容器是否可见
+        // 方法2：检查容器是否可见
         const containerStyle = window.getComputedStyle(this.container);
         if (containerStyle.display === 'none' || containerStyle.visibility === 'hidden') {
             return false;
         }
         
-        // 方法2：检查 Dock 面板元素
-        const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
-        if (dockPanel) {
-            const panelStyle = window.getComputedStyle(dockPanel);
-            if (panelStyle.display === 'none' || panelStyle.visibility === 'hidden') {
-                return false;
-            }
-            // 检查是否有隐藏类
-            if (dockPanel.classList.contains('fn__none') || dockPanel.classList.contains('dock--hide')) {
-                return false;
-            }
-        }
-        
-        // 方法3：检查容器的父元素链
+        // 方法3：检查容器的父元素链是否有隐藏的
         let parent = this.container.parentElement;
         while (parent) {
             const parentStyle = window.getComputedStyle(parent);
@@ -681,6 +837,9 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== UI ====================
 
 private initSidebarUI(container: HTMLElement) {
+        // Guard: prevent double render (e.g. addTab.init + ensureTabContent both firing)
+        if (container.querySelector('.rss-reader-container')) return;
+
         // Reset event binding flag before rebuilding DOM
         this.subscriptionEventsBound = false;
         
@@ -714,23 +873,25 @@ private initSidebarUI(container: HTMLElement) {
 
         container.innerHTML = `
             <div class="rss-reader-container" style="width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;">
-                <!-- Title bar -->
-                <div id="rssTitleBar" style="flex-shrink:0;display:flex;align-items:center;padding:4px 8px;border-bottom:1px solid var(--b3-border-color);background:var(--b3-theme-surface);min-height:32px;">
-                    <svg style="width:16px;height:16px;flex-shrink:0;margin-right:6px;"><use xlink:href="#iconRSSMain"></use></svg>
-                    <span style="font-size:13px;font-weight:600;color:var(--b3-font-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">RSS Reader</span>
-                    <div style="flex:1;"></div>
-                    <!-- Settings, Help, Minimize buttons -->
-                    <button id="tbSettings" title="${this.i18n.settings}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSSettings"></use></svg></button>
-                    <button id="tbHelp" title="${this.i18n.help}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSHelp"></use></svg></button>
-                    <span data-type="min" title="${this.i18n.minimize}"><svg class="title-bar-btn-icon"><use xlink:href="#iconRSSMinimize"></use></svg></span>
-                </div>
-                <!-- Content area below title bar -->
                 <div style="flex:1;display:flex;overflow:hidden;">
                     <!-- Left: subscription sidebar -->
                     <div id="rssSidebar" class="rss-sidebar" style="width:20%;min-width:min-content;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
                         <!-- Subscription list (includes add button) -->
                         <div id="rssList" class="rss-list" style="flex:1;overflow-y:auto;padding:4px;">
                             ${this.renderSubscriptionListHTML()}
+                        </div>
+                        <!-- Article count bar -->
+                        <div id="articleCount" style="padding:4px 10px;font-size:11px;color:var(--b3-font-color-quaternary);text-align:center;border-top:1px solid var(--b3-border-color);flex-shrink:0;"></div>
+                        <!-- Bottom bar: Settings + Help with slide animation -->
+                        <div class="rss-bottom-bar">
+                            <button id="tbSettings" title="${this.i18n.settings}" class="rss-bottom-btn tb-settings">
+                                <span class="rss-bottom-btn-icon"><svg><use xlink:href="#iconRSSSettings"></use></svg></span>
+                                <span class="rss-bottom-btn-text">${this.i18n.settings}</span>
+                            </button>
+                            <button id="tbHelp" title="${this.i18n.help}" class="rss-bottom-btn tb-help">
+                                <span class="rss-bottom-btn-icon"><svg><use xlink:href="#iconRSSHelp"></use></svg></span>
+                                <span class="rss-bottom-btn-text">${this.i18n.help}</span>
+                            </button>
                         </div>
                     </div>
                     <!-- Horizontal resizer -->
@@ -765,16 +926,11 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     private setupEventListeners(container: HTMLElement) {
-        // Bind title bar toolbar buttons
         const bind = (id: string, fn: () => void) => {
             container.querySelector('#' + id)?.addEventListener('click', fn);
         };
-        // Note: tbAdd is now inside #rssList and handled by event delegation in setupSubscriptionEvents
-        bind('tbRefresh', () => this.refreshCurrentFeed(container));
-        bind('tbMarkRead', () => this.markAllRead(container));
         bind('tbSettings', () => this.showSettingsDialog(container));
         bind('tbHelp', () => this.showHelpDialog());
-        // Minimize uses data-type="min" - SiYuan handles automatically
 
         // SiYuan built-in block__icon class handles hover styles automatically
 
@@ -908,115 +1064,6 @@ private initSidebarUI(container: HTMLElement) {
     }
 
     // ==================== Resizer ====================
-
-    // Add toolbar buttons to dock header (top-right, like Graph View)
-    private addToolbarToDockHeader(container: HTMLElement) {
-        // Wait for dock to be fully rendered
-        this.safeSetTimeout(() => {
-            this.doAddToolbarToDockHeader(container);
-        }, 100);
-    }
-
-    private doAddToolbarToDockHeader(container: HTMLElement) {
-        // Find the dock panel by data-type
-        const dockPanel = document.querySelector('[data-type="rss_reader_dock"]') as HTMLElement;
-        if (!dockPanel) {
-            logger.warn('Dock panel not found for toolbar');
-            return;
-        }
-
-        // SiYuan dock structure: the header is typically the first flex row
-        // Look for any element that contains a close button
-        let header: HTMLElement | null = null;
-        
-        // Strategy 1: Find by close button parent
-        const closeBtn = dockPanel.querySelector('[data-type="close"]') as HTMLElement;
-        if (closeBtn && closeBtn.parentElement) {
-            header = closeBtn.parentElement as HTMLElement;
-        }
-        
-        // Strategy 2: Find by common dock header classes
-        if (!header) {
-            header = dockPanel.querySelector('.dock__header, .layout__tab--header, [class*="header"]') as HTMLElement | null;
-        }
-        
-        // Strategy 3: First non-column flex child
-        if (!header) {
-            const children = Array.from(dockPanel.children);
-            for (const child of children) {
-                const el = child as HTMLElement;
-                const style = window.getComputedStyle(el);
-                if (style.display === 'flex' && !el.classList.contains('fn__flex-column')) {
-                    header = el;
-                    break;
-                }
-            }
-        }
-
-        if (!header) {
-            logger.warn('Dock header not found - all strategies failed');
-            return;
-        }
-
-        // Check if toolbar already added
-        if (header.querySelector('#rssDockToolbar')) return;
-
-        // Ensure header has flex layout (like Graph View)
-        header.style.display = 'flex';
-        header.style.alignItems = 'center';
-
-        // Add left title section (icon + plugin name) if not exists
-        if (!header.querySelector('.rss-dock-title')) {
-            const titleSection = document.createElement('div');
-            titleSection.className = 'rss-dock-title fn__flex';
-            titleSection.style.cssText = 'align-items:center; flex-shrink:0; padding:0 8px;';
-            titleSection.innerHTML = `
-                <svg class="block__logoicon" style="width:16px;height:16px;margin-right:6px;">
-                    <use xlink:href="#iconRSSMain"></use>
-                </svg>
-                <span class="block__text">RSS Reader</span>
-            `;
-            header.insertBefore(titleSection, header.firstChild);
-        }
-
-        // Create toolbar container (like Graph View's right-side icon group)
-        const toolbar = document.createElement('div');
-        toolbar.id = 'rssDockToolbar';
-        toolbar.className = 'fn__flex';
-        toolbar.style.cssText = 'align-items:center; margin-left:auto; flex-shrink:0;';
-
-        // SiYuan built-in SVG icons (same style as Graph View)
-        toolbar.innerHTML = [
-            { id: 'dockAddRSS',       icon: 'iconPlus',      tip: this.i18n.add },
-            { id: 'dockRefreshBtn',   icon: 'iconRefresh',   tip: this.i18n.refresh },
-            { id: 'dockMarkAllReadBtn', icon: 'iconCheck',   tip: this.i18n.markAllRead },
-            { id: 'dockSettingsBtn',  icon: 'iconSetting', tip: this.i18n.settings },
-            { id: 'dockHelpBtn',      icon: 'iconQuestionCircle',     tip: this.i18n.help },
-        ].map(btn =>
-            `<button class="block__icon" title="${btn.tip}" id="${btn.id}">` +
-                `<svg><use xlink:href="#${btn.icon}"></use></svg></button>`
-        ).join('<span class="fn__space"></span>');
-
-        // Insert before the close button (rightmost position, like Graph View)
-        const closeButton = header.querySelector('[data-type="close"]') 
-                       || header.querySelector('.block__icon[data-type="close"]')
-                       || header.lastElementChild;
-        if (closeButton) {
-            header.insertBefore(toolbar, closeButton);
-        } else {
-            header.appendChild(toolbar);
-        }
-
-        // Bind events
-        const bind = (id: string, fn: () => void) => {
-            toolbar.querySelector('#' + id)?.addEventListener('click', fn);
-        };
-        bind('dockAddRSS', () => { if (this.container) this.showAddSubscriptionDialog(this.container); });
-        bind('dockRefreshBtn', () => { if (this.container) this.refreshCurrentFeed(this.container); });
-        bind('dockMarkAllReadBtn', () => { if (this.container) this.markAllRead(this.container); });
-        bind('dockSettingsBtn', () => { if (this.container) this.showSettingsDialog(this.container); });
-        bind('dockHelpBtn', () => { this.showHelpDialog(); });
-    }
 
     private setupResizerEvents(container: HTMLElement) {
         // Fix #3: Clean up old event listeners before adding new ones
@@ -1649,20 +1696,6 @@ private initSidebarUI(container: HTMLElement) {
         articleList.addEventListener("scroll", this.listScrollHandler);
     }
 
-    // Fix #4: Watch SiYuan theme changes
-    private watchThemeChanges(container: HTMLElement) {
-        this.themeObserver = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.type === "attributes" && mutation.attributeName === "data-theme") {
-                    const theme = document.body.getAttribute("data-theme");
-                    logger.log("Theme changed to:", theme);
-                    // CSS variables handle the actual theming, no JS needed
-                }
-            }
-        });
-        this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ["data-theme"] });
-    }
-
     // Fix #5: Check if article list is full and auto-load more
     private checkAndLoadMore(container: HTMLElement) {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
@@ -1685,13 +1718,11 @@ private initSidebarUI(container: HTMLElement) {
                 // Fix: Only check once after render, don't recursively call
                 this.safeSetTimeout(() => {
                     this.isLoadingMore = false;
-                    // Don't recursively call checkAndLoadMore - just reset counter
                     if (this.displayedArticleCount >= this.currentArticles.length) {
                         this.autoLoadRetryCount = 0;
                     }
                 }, 150);
             } else {
-                // Reset counter when condition is met or no more articles
                 this.autoLoadRetryCount = 0;
             }
         });
@@ -1877,7 +1908,7 @@ private initSidebarUI(container: HTMLElement) {
         // Detect HTML/captcha responses instead of XML
         const trimmed = xml.trimStart();
         if (trimmed.startsWith("<html") || trimmed.startsWith("<!DOCTYPE")) {
-            console.error("[RSS] Got HTML page instead of RSS (likely anti-bot/captcha):", xml.substring(0, 300));
+            logger.error("Got HTML page instead of RSS (likely anti-bot/captcha):", xml.substring(0, 300));
             throw new Error(this.i18n.htmlNotRss);
         }
 
@@ -1889,7 +1920,7 @@ private initSidebarUI(container: HTMLElement) {
 
         const parseError = doc.querySelector("parsererror");
         if (parseError) {
-            console.error("[RSS] XML parse error:", parseError.textContent?.substring(0, 300));
+            logger.error("XML parse error:", parseError.textContent?.substring(0, 300));
             throw new Error(this.i18n.rssParseFailed);
         }
 
@@ -2210,14 +2241,38 @@ private initSidebarUI(container: HTMLElement) {
                 for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
                     this.readStatus[articleId] = status;
                 }
-                
-                // Save to storage
+
+                // Merge with storage to preserve entries from other devices
+                const stored: ReadStatus = await this.loadData(READ_STATUS_NAME) || {};
+                for (const [articleId, status] of Object.entries(stored)) {
+                    const existing = this.readStatus[articleId];
+                    if (!existing) {
+                        // New entry from sync — keep it
+                        this.readStatus[articleId] = status;
+                    } else if (status.readAt && existing.readAt && status.readAt > existing.readAt) {
+                        // Sync'd entry is newer — update
+                        this.readStatus[articleId] = status;
+                    }
+                }
+
+                // Save merged result
                 await this.saveData(READ_STATUS_NAME, this.readStatus);
-                
+
+                const savedCount = this.pendingReadStatusChanges.size;
                 // Clear pending changes
                 this.pendingReadStatusChanges.clear();
-                
-                logger.log(`[Batch Save] Saved ${this.pendingReadStatusChanges.size} read status changes`);
+
+                logger.log(`[Batch Save] Saved ${savedCount} read status changes`);
+
+                // Update unread badges on subscription list
+                if (this.container?.isConnected) {
+                    const rssList = this.container.querySelector("#rssList");
+                    if (rssList) {
+                        this.updateUnreadCounts().then(() => {
+                            rssList.innerHTML = this.renderSubscriptionListHTML();
+                        });
+                    }
+                }
             } catch (error) {
                 logger.error("Failed to batch save read status:", error);
             }
@@ -2503,6 +2558,8 @@ private initSidebarUI(container: HTMLElement) {
             
             sub.lastFetchTime = Date.now();
             sub.updatedAt = Date.now();
+            // Persist timestamps for sync correctness
+            await this.saveSubscriptionsWithMerge();
             
             // Incremental UI update
             await this.updateUIAfterRefresh(index, container, merged, cached);
@@ -2716,7 +2773,7 @@ private initSidebarUI(container: HTMLElement) {
             showMessage(`${this.i18n.saved}: ${fileName}`, 4000);
 
         } catch (error) {
-            console.error("[RSS] Save error:", error);
+            logger.error("Save error:", error);
             showMessage(`${this.i18n.saveFailed}: ${error}`, 3000);
         }
     }
@@ -2927,7 +2984,7 @@ ${escaped}
             }
         }
         if (count > 0) showMessage(`${this.i18n.newArticles}: ${count}`, 3000);
-        await this.saveData(STORAGE_NAME, this.subscriptions);
+        await this.saveSubscriptionsWithMerge();
     }
 
     private setupAutoRefresh(container: HTMLElement) {
@@ -3013,18 +3070,18 @@ ${escaped}
                     </div>
                     
                     <div id="templateOptionsSection" style="${this.settings.useTemplate ? '' : 'display:none;margin-top:16px;'}">
-                        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                        <div style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 0;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:6px 16px 6px 8px;border-radius:4px;background:var(--b3-theme-surface-lighter);">
                                 <input type="checkbox" class="template-option" id="templateShowSiteName" ${this.settings.templateShowSiteName ? 'checked' : ''}>
-                                订阅源名称
+                                ${this.i18n.templateSiteName || 'Site name'}
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:6px 16px 6px 8px;border-radius:4px;background:var(--b3-theme-surface-lighter);">
                                 <input type="checkbox" class="template-option" id="templateShowDateTime" ${this.settings.templateShowDateTime ? 'checked' : ''}>
-                                保存日期时间
+                                ${this.i18n.templateDateTime || 'Save date time'}
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:6px 16px 6px 8px;border-radius:4px;background:var(--b3-theme-surface-lighter);">
                                 <input type="checkbox" class="template-option" id="templateShowLink" ${this.settings.templateShowLink ? 'checked' : ''}>
-                                原文链接
+                                ${this.i18n.templateOriginalLink || 'Original link'}
                             </label>
                         </div>
                     </div>

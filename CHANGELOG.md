@@ -5,6 +5,38 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.21] - 2026-05-28
+
+### 改进
+
+- **标签页模式迁移**: 从 Dock 面板切换为 SiYuan 标签页模式，避免快捷键与编辑器输入冲突
+  - 添加 `addTab()` 注册 RSS 阅读器标签页类型
+  - 顶部栏图标点击打开标签页而非切换 Dock
+  - 标签页关闭时自动清理事件监听和状态
+  - 支持通过 `getOpenedTab()` 检测已打开的标签页，防止重复打开
+- **UI 重构**: 适配标签页模式 UI 布局
+  - 移除独立标题栏，将设置/帮助按钮移到侧边栏底部
+  - 底部按钮悬停展开动画，与操作按钮风格统一
+  - 按钮颜色全面深色主题适配（暗色哑光 + #fff 图标）
+  - 所有按钮悬停动画统一使用 `cubic-bezier(0.25, 0.8, 0.25, 1)` 缓出曲线
+  - 图标-文字间距统一使用 flex `gap: 8px`
+- **文章计数显示**: 在侧边栏底部添加文章计数器，实时显示已读/总数
+- **触屏支持优化**: 触屏设备禁用 hover 展开动画，按钮保持圆形图标，点按直接触发功能
+
+### 修复
+
+- **标签页重复打开**: 添加 `rssTabOpen` 标志 + `getOpenedTab()` 双重检查，防止重复打开 RSS 标签页
+- **标签页面板空白**: 添加 `ensureTabContent()` 三级降级策略，确保标签页内容总是渲染
+- **断开的标签页引用**: `openOrSwitchToRssTab` 中检查 `headElement.isConnected`，避免点击已断开的 DOM 元素
+- **卸载时未保存阅读状态**: `onunload` 中添加 `saveData` 持久化待处理的已读状态变更
+- **刷新未保存时间戳**: `refreshSubscription` 中调用 `saveSubscriptionsWithMerge` 持久化 `lastFetchTime`
+- **`batchSaveReadStatus` 日志错误**: 修复日志在 `.clear()` 后读取 `size` 显示 0 的问题
+- **数据加载时序竞争**: 数据加载完成后若标签页已初始化，自动刷新订阅列表 UI
+- **后台轮询覆盖同步**: `checkForUpdates` 改用 `saveSubscriptionsWithMerge` 避免覆盖其他设备的更新
+- **多设备已读状态同步**: `batchSaveReadStatus` 入库前合并存储区最新数据，保留其他设备标记的已读状态
+- **`checkAndLoadMore` 被误删**: 恢复自动加载更多文章的方法
+- **移除死代码**: 删除未调用的 `watchThemeChanges` 方法及其 `themeObserver` 属性
+
 ## [0.1.20] - 2026-05-23
 
 ### 新增

@@ -86,5 +86,9 @@
     "parseWarningDetail": "共 {total} 篇文章，{failed} 篇解析失败",
     "requestTimeout": "请求超时（{seconds}秒），请检查网络连接或稍后重试",
     "networkFailed": "网络连接失败：{error}\n\n请检查：\n1. 网络连接是否正常\n2. 订阅源地址是否正确\n3. 是否需要代理访问",
-    "allRetriesFailed": "{error}\n\n已尝试 {attempts} 次，请检查网络连接后重试。"
+    "allRetriesFailed": "{error}\n\n已尝试 {attempts} 次，请检查网络连接后重试。",
+    "useTemplate": "使用模板",
+    "templateSiteName": "订阅源名称",
+    "templateDateTime": "保存日期时间",
+    "templateOriginalLink": "原文链接"
 }

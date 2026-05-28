@@ -1,19 +1,5 @@
 // RSS Reader Plugin Styles
 
-// Hide top bar icon - keep only plugin list entry
-// This selector targets the top bar button created by addTopBar()
-#barPlugins [data-type="rss_reader_dock_topbar"],
-.toolbar__item[data-type="rss_reader_dock_topbar"],
-.bar__plugin .toolbar__item:has(svg use[xlink\:href="#iconRSSMain"]),
-#barPlugins > .toolbar__item:has(svg use[xlink\:href="#iconRSSMain"]) {
-    display: none !important;
-    visibility: hidden !important;
-    width: 0 !important;
-    height: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}
-
 :root {
     // ✅ Magic numbers extracted as CSS variables for easy maintenance
     --rss-button-size: 24px;
@@ -224,13 +210,14 @@ body.b3-theme-dark,
     border: 1px solid var(--b3-theme-primary);
     border-radius: 50%;
     cursor: pointer;
-    position: relative;
     overflow: hidden;
-    transition-duration: 0.3s;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                background-color 0.3s ease;
     box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
     background-color: var(--b3-theme-primary);
     color: var(--b3-font-color);
     padding: 0;
+    gap: 0;
     
     svg {
         width: 14px;
@@ -238,68 +225,35 @@ body.b3-theme-dark,
         stroke: currentColor;
         fill: none;
         flex-shrink: 0;
-        vertical-align: middle;
         transition-duration: 0.3s;
     }
     
     &:hover {
-        width: 110px;
+        width: 130px;
         border-radius: 20px;
-        justify-content: flex-start;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 14px;
         background-color: var(--b3-theme-primary-light);
         border-color: var(--b3-theme-primary);
         
-        svg {
-            padding-left: 12px;
-        }
-        
         .save-to-siyuan-btn-text {
-            right: 10%;
-            width: 55%;
             opacity: 1;
+            width: auto;
         }
     }
 }
 
 // Save button text
 .save-to-siyuan-btn-text {
-    position: absolute;
-    right: 0%;
-    width: 0%;
     opacity: 0;
+    width: 0;
+    overflow: hidden;
     color: currentColor;
     font-size: 14px;
     font-weight: 600;
     transition-duration: 0.3s;
     white-space: nowrap;
-}
-
-// Title bar action buttons (Settings, Help, Minimize)
-#tbSettings,
-#tbHelp,
-span[data-type="min"] {
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--b3-font-color);
-    background: transparent;
-    border: 1px solid transparent;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: all 0.2s;
-    
-    &:hover {
-        border-color: var(--b3-font-color);
-    }
-}
-
-// Title bar button icons
-.title-bar-btn-icon {
-    width: 24px !important;
-    height: 24px !important;
-    color: inherit;
 }
 
 // Enhanced add subscription button with slide animation
@@ -309,15 +263,16 @@ span[data-type="min"] {
     justify-content: flex-start;
     width: 32px;
     height: 32px;
-    border: 1px solid var(--b3-theme-primary);  // Blue border
+    border: 1px solid #155e75;
     border-radius: 50%;
     cursor: pointer;
     position: relative;
     overflow: hidden;
-    transition-duration: 0.3s;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                background-color 0.3s ease;
     box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-    background-color: var(--b3-theme-primary);  // Blue background (same as border)
-    color: var(--b3-font-color);  // Theme text color (white in dark, black in light)
+    background-color: #155e75;
+    color: var(--b3-font-color);
     padding: 0;
     
     /* plus sign */
@@ -338,11 +293,10 @@ span[data-type="min"] {
     
     /* text */
     .rss-add-btn-text {
-        position: absolute;
-        right: 0%;
-        width: 0%;
         opacity: 0;
-        color: currentColor;  // Inherit from parent (theme text color)
+        width: 0;
+        overflow: hidden;
+        color: currentColor;
         font-size: 14px;
         font-weight: 600;
         transition-duration: 0.3s;
@@ -353,22 +307,22 @@ span[data-type="min"] {
     &:hover {
         width: 100px;
         border-radius: 20px;
-        transition-duration: 0.3s;
-        background-color: var(--b3-theme-primary-light);  // Lighter blue on hover
-        border-color: var(--b3-theme-primary);
-        
+        justify-content: center;
+        gap: 8px;
+        padding: 0 12px;
+        background-color: #0e7490;
+        border-color: #155e75;
+
         .rss-add-btn-sign {
-            width: 30%;
+            width: auto;
             transition-duration: 0.3s;
-            padding-left: 8px;
         }
         
-        /* hover effect button's text */
         .rss-add-btn-text {
             opacity: 1;
-            width: 70%;
+            width: auto;
+            overflow: visible;
             transition-duration: 0.3s;
-            padding-right: 8px;
         }
     }
     
@@ -378,18 +332,18 @@ span[data-type="min"] {
     }
 }
 
-// Simplified blue add button for subscription list (when subscriptions exist)
+// Simplified add button for subscription list (when subscriptions exist)
 .rss-add-btn-simple {
     width: 32px;
     height: 32px;
-    border: 1px solid var(--b3-theme-primary);
+    border: 1px solid #155e75;
     border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--b3-theme-primary);
-    color: var(--b3-font-color);  // Auto-adapts to theme (white/black)
+    background-color: #155e75;
+    color: var(--b3-font-color);
     transition: all 0.2s;
     padding: 0;
     
@@ -401,8 +355,8 @@ span[data-type="min"] {
     }
     
     &:hover {
-        background-color: var(--b3-theme-primary-light);
-        border-color: var(--b3-theme-primary);
+        background-color: #0e7490;
+        border-color: #155e75;
     }
     
     &:active {
@@ -410,10 +364,10 @@ span[data-type="min"] {
     }
 }
 
-// Container for action buttons - fixed width for hover expansion
+// Container for action buttons - fixed width matched to hover expansion
 .subscription-actions {
     position: relative;
-    width: 96px;
+    width: 120px;
     height: 24px;
     display: flex;
     align-items: center;
@@ -429,6 +383,11 @@ span[data-type="min"] {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s ease;
+}
+
+// Article count bar: hide when empty
+#articleCount:empty {
+    display: none;
 }
 
 // Enhanced action buttons with slide animation
@@ -453,39 +412,41 @@ span[data-type="min"] {
     
     // Colored backgrounds - visual trick: border same as background
     &.mark-read-rss {
-        background-color: #ff8c00;
-        border-color: #ff8c00;
+        background-color: #854d0e;
+        border-color: #854d0e;
         color: var(--b3-font-color);
     }
     
     &.refresh-rss {
-        background-color: #4caf50;
-        border-color: #4caf50;
+        background-color: #14532d;
+        border-color: #14532d;
         color: var(--b3-font-color);
     }
     
     &.delete-rss {
-        background-color: #e53935;
-        border-color: #e53935;
+        background-color: #7f1d1d;
+        border-color: #7f1d1d;
         color: var(--b3-font-color);
     }
     
-    // Hover state - visual trick: background lightens, border shows
+    // Hover state: expands, icon+text centered, background lightens
     &:hover {
-        width: 100%;
+        width: 120px;
+        justify-content: center;
+        gap: 8px;
         z-index: 2;
         transition-delay: 0s;
         
         &.mark-read-rss {
-            background-color: rgba(255, 140, 0, 0.8);
+            background-color: #a16207;
         }
         
         &.refresh-rss {
-            background-color: rgba(76, 175, 80, 0.8);
+            background-color: #166534;
         }
         
         &.delete-rss {
-            background-color: rgba(229, 57, 53, 0.8);
+            background-color: #991b1b;
         }
     }
 }
@@ -525,17 +486,101 @@ span[data-type="min"] {
     white-space: nowrap;
     max-width: 0;
     opacity: 0;
-    margin-left: 0;
     transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                opacity 0.3s ease,
-                margin-left 0.3s ease;
+                opacity 0.3s ease;
 }
 
 // Show text on hover
 .rss-action-btn-enhanced:hover .rss-action-btn-text {
-    max-width: 60px;
+    max-width: 80px;
     opacity: 1;
-    margin-left: 6px;
+}
+
+// Bottom bar buttons (Settings, Help) with slide animation
+.rss-bottom-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-top: 1px solid var(--b3-border-color);
+    padding: 4px 6px;
+}
+
+.rss-bottom-btn {
+    height: 28px;
+    width: 28px;
+    border-radius: 14px;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    cursor: pointer;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                background-color 0.3s ease,
+                border-radius 0.3s ease;
+    box-sizing: border-box;
+    padding: 0;
+    background-color: transparent;
+
+    svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        stroke: currentColor;
+        fill: none;
+    }
+
+    .rss-bottom-btn-icon {
+        width: 26px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .rss-bottom-btn-text {
+        font-size: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+        max-width: 0;
+        opacity: 0;
+        overflow: hidden;
+        transition: max-width 0.3s, opacity 0.3s;
+        margin-right: 4px;
+    }
+
+    &.tb-settings {
+        background-color: #44403c;
+        border-color: #44403c;
+        color: var(--b3-font-color);
+
+        &:hover {
+            background-color: #57534e;
+        }
+    }
+
+    &.tb-help {
+        background-color: #4c1d95;
+        border-color: #4c1d95;
+        color: var(--b3-font-color);
+
+        &:hover {
+            background-color: #5b21b6;
+        }
+    }
+
+    &:hover {
+        width: 110px;
+        border-radius: 14px;
+        justify-content: center;
+        gap: 8px;
+
+        .rss-bottom-btn-text {
+            max-width: 80px;
+            opacity: 1;
+        }
+    }
 }
 
 // Unread badge on subscription list items
@@ -558,4 +603,45 @@ span[data-type="min"] {
     line-height: 1;
     z-index: 2;
     pointer-events: none;
+}
+
+// Touch devices: disable hover expansions, keep icons only
+@media (hover: none) {
+    .save-to-siyuan-btn,
+    .rss-add-btn-enhanced,
+    .rss-action-btn-enhanced,
+    .rss-bottom-btn {
+        &:hover {
+            width: auto !important;
+            gap: 0 !important;
+            padding: 0 !important;
+            border-radius: 50% !important;
+            justify-content: center !important;
+        }
+        
+        .save-to-siyuan-btn-text,
+        .rss-add-btn-text,
+        .rss-action-btn-text,
+        .rss-bottom-btn-text {
+            max-width: 0 !important;
+            opacity: 0 !important;
+            overflow: hidden !important;
+        }
+    }
+    
+    .rss-bottom-btn:hover {
+        width: 28px !important;
+        border-radius: 14px !important;
+    }
+    
+    // Keep all action buttons visible on touch (no sibling hiding)
+    .subscription-actions:has(.mark-read-rss:hover) .refresh-rss,
+    .subscription-actions:has(.mark-read-rss:hover) .delete-rss,
+    .subscription-actions:has(.refresh-rss:hover) .mark-read-rss,
+    .subscription-actions:has(.refresh-rss:hover) .delete-rss,
+    .subscription-actions:has(.delete-rss:hover) .mark-read-rss,
+    .subscription-actions:has(.delete-rss:hover) .refresh-rss {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
 }
