@@ -1,12 +1,33 @@
 // RSS Reader Plugin Styles
 
 :root {
-    // ✅ Magic numbers extracted as CSS variables for easy maintenance
     --rss-button-size: 24px;
     --rss-icon-size: 16px;
     --rss-item-padding: 8px 10px;
     --rss-item-gap: 8px;
     --rss-item-margin-bottom: 4px;
+
+    // Pastel hues
+    --hue-add: 200;        // 粉蓝
+    --hue-markread: 45;    // 粉黄
+    --hue-refresh: 140;    // 粉绿
+    --hue-delete: 340;     // 粉红
+    --hue-settings: 25;    // 粉橙
+    --hue-help: 270;       // 粉紫
+
+    // Light mode: moderate lightness, pastel saturation
+    --btn-add: hsl(var(--hue-add), 45%, 52%);
+    --btn-add-hover: hsl(var(--hue-add), 45%, 62%);
+    --btn-markread: hsl(var(--hue-markread), 50%, 52%);
+    --btn-markread-hover: hsl(var(--hue-markread), 50%, 62%);
+    --btn-refresh: hsl(var(--hue-refresh), 40%, 50%);
+    --btn-refresh-hover: hsl(var(--hue-refresh), 40%, 60%);
+    --btn-delete: hsl(var(--hue-delete), 45%, 52%);
+    --btn-delete-hover: hsl(var(--hue-delete), 45%, 62%);
+    --btn-settings: hsl(var(--hue-settings), 45%, 52%);
+    --btn-settings-hover: hsl(var(--hue-settings), 45%, 62%);
+    --btn-help: hsl(var(--hue-help), 40%, 50%);
+    --btn-help-hover: hsl(var(--hue-help), 40%, 60%);
 }
 
 .rss-reader-container {
@@ -83,6 +104,20 @@
 body.b3-theme-dark,
 .protyle-wysiwyg[data-theme="dark"],
 [data-theme="dark"] {
+    // Dark mode: subdued pastel tones, higher saturation to keep color visible
+    --btn-add: hsl(var(--hue-add), 55%, 32%);
+    --btn-add-hover: hsl(var(--hue-add), 55%, 42%);
+    --btn-markread: hsl(var(--hue-markread), 60%, 32%);
+    --btn-markread-hover: hsl(var(--hue-markread), 60%, 42%);
+    --btn-refresh: hsl(var(--hue-refresh), 50%, 30%);
+    --btn-refresh-hover: hsl(var(--hue-refresh), 50%, 40%);
+    --btn-delete: hsl(var(--hue-delete), 55%, 34%);
+    --btn-delete-hover: hsl(var(--hue-delete), 55%, 44%);
+    --btn-settings: hsl(var(--hue-settings), 55%, 32%);
+    --btn-settings-hover: hsl(var(--hue-settings), 55%, 42%);
+    --btn-help: hsl(var(--hue-help), 50%, 34%);
+    --btn-help-hover: hsl(var(--hue-help), 50%, 44%);
+
     // 深色模式下不修改文章列表样式
     // 所有样式由TS内联控制，自动适配主题变量
 
@@ -217,7 +252,6 @@ body.b3-theme-dark,
     background-color: var(--b3-theme-primary);
     color: var(--b3-font-color);
     padding: 0;
-    gap: 0;
     
     svg {
         width: 14px;
@@ -231,15 +265,13 @@ body.b3-theme-dark,
     &:hover {
         width: 130px;
         border-radius: 20px;
-        justify-content: center;
-        gap: 8px;
-        padding: 0 14px;
         background-color: var(--b3-theme-primary-light);
         border-color: var(--b3-theme-primary);
         
         .save-to-siyuan-btn-text {
             opacity: 1;
-            width: auto;
+            max-width: 80px;
+            margin-left: 6px;
         }
     }
 }
@@ -247,38 +279,40 @@ body.b3-theme-dark,
 // Save button text
 .save-to-siyuan-btn-text {
     opacity: 0;
-    width: 0;
     overflow: hidden;
+    max-width: 0;
     color: currentColor;
     font-size: 14px;
     font-weight: 600;
-    transition-duration: 0.3s;
+    margin-left: 0;
     white-space: nowrap;
+    transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                opacity 0.3s ease,
+                margin-left 0.4s ease;
 }
 
 // Enhanced add subscription button with slide animation
 .rss-add-btn-enhanced {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
     width: 32px;
     height: 32px;
-    border: 1px solid #155e75;
-    border-radius: 50%;
+    border: 1px solid var(--btn-add);
+    border-radius: 16px;
     cursor: pointer;
     position: relative;
     overflow: hidden;
     transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
                 background-color 0.3s ease;
     box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-    background-color: #155e75;
+    background-color: var(--btn-add);
     color: var(--b3-font-color);
     padding: 0;
     
     /* plus sign */
     .rss-add-btn-sign {
-        width: 100%;
-        transition-duration: 0.3s;
+        width: 16px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -286,7 +320,7 @@ body.b3-theme-dark,
         svg {
             width: 16px;
             height: 16px;
-            stroke: currentColor;  // Inherit from parent (theme text color)
+            stroke: currentColor;
             fill: none;
         }
     }
@@ -294,35 +328,29 @@ body.b3-theme-dark,
     /* text */
     .rss-add-btn-text {
         opacity: 0;
-        width: 0;
         overflow: hidden;
+        max-width: 0;
         color: currentColor;
         font-size: 14px;
         font-weight: 600;
-        transition-duration: 0.3s;
+        margin-left: 0;
         white-space: nowrap;
+        transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                    opacity 0.3s ease,
+                    margin-left 0.4s ease;
     }
     
     /* hover effect on button width */
     &:hover {
         width: 100px;
-        border-radius: 20px;
-        justify-content: center;
-        gap: 8px;
-        padding: 0 12px;
-        background-color: #0e7490;
-        border-color: #155e75;
+        background-color: var(--btn-add-hover);
+        border-color: var(--btn-add);
 
-        .rss-add-btn-sign {
-            width: auto;
-            transition-duration: 0.3s;
-        }
-        
         .rss-add-btn-text {
             opacity: 1;
-            width: auto;
+            max-width: 80px;
+            margin-left: 6px;
             overflow: visible;
-            transition-duration: 0.3s;
         }
     }
     
@@ -336,13 +364,13 @@ body.b3-theme-dark,
 .rss-add-btn-simple {
     width: 32px;
     height: 32px;
-    border: 1px solid #155e75;
+    border: 1px solid var(--btn-add);
     border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: #155e75;
+    background-color: var(--btn-add);
     color: var(--b3-font-color);
     transition: all 0.2s;
     padding: 0;
@@ -355,8 +383,8 @@ body.b3-theme-dark,
     }
     
     &:hover {
-        background-color: #0e7490;
-        border-color: #155e75;
+        background-color: var(--btn-add-hover);
+        border-color: var(--btn-add);
     }
     
     &:active {
@@ -412,41 +440,39 @@ body.b3-theme-dark,
     
     // Colored backgrounds - visual trick: border same as background
     &.mark-read-rss {
-        background-color: #854d0e;
-        border-color: #854d0e;
+        background-color: var(--btn-markread);
+        border-color: var(--btn-markread);
         color: var(--b3-font-color);
     }
     
     &.refresh-rss {
-        background-color: #14532d;
-        border-color: #14532d;
+        background-color: var(--btn-refresh);
+        border-color: var(--btn-refresh);
         color: var(--b3-font-color);
     }
     
     &.delete-rss {
-        background-color: #7f1d1d;
-        border-color: #7f1d1d;
+        background-color: var(--btn-delete);
+        border-color: var(--btn-delete);
         color: var(--b3-font-color);
     }
     
     // Hover state: expands, icon+text centered, background lightens
     &:hover {
         width: 120px;
-        justify-content: center;
-        gap: 8px;
         z-index: 2;
         transition-delay: 0s;
         
         &.mark-read-rss {
-            background-color: #a16207;
+            background-color: var(--btn-markread-hover);
         }
         
         &.refresh-rss {
-            background-color: #166534;
+            background-color: var(--btn-refresh-hover);
         }
         
         &.delete-rss {
-            background-color: #991b1b;
+            background-color: var(--btn-delete-hover);
         }
     }
 }
@@ -486,42 +512,56 @@ body.b3-theme-dark,
     white-space: nowrap;
     max-width: 0;
     opacity: 0;
+    overflow: hidden;
+    margin-left: 0;
     transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                opacity 0.3s ease;
+                opacity 0.3s ease,
+                margin-left 0.4s ease;
 }
 
 // Show text on hover
 .rss-action-btn-enhanced:hover .rss-action-btn-text {
     max-width: 80px;
     opacity: 1;
+    margin-left: 6px;
 }
 
-// Bottom bar buttons (Settings, Help) with slide animation
+// Bottom bar container - positioned relative for absolute buttons, fixed width centered
 .rss-bottom-bar {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border-top: 1px solid var(--b3-border-color);
+    position: relative;
+    width: 80px;
+    height: 36px;
     padding: 4px 6px;
+    border-top: 1px solid var(--b3-border-color);
+    margin: 0 auto;
+    flex-shrink: 0;
+    align-self: center;
 }
 
 .rss-bottom-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
     height: 28px;
     width: 28px;
     border-radius: 14px;
     border: 1px solid;
     display: flex;
     align-items: center;
+    justify-content: center;
     overflow: hidden;
     cursor: pointer;
-    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                background-color 0.3s ease,
-                border-radius 0.3s ease;
     box-sizing: border-box;
     padding: 0;
     background-color: transparent;
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                background-color 0.3s ease,
+                border-radius 0.3s ease,
+                z-index 0s 0.4s;
+    z-index: 1;
+
+    &.tb-settings { left: 6px; }
+    &.tb-help { right: 6px; }
 
     svg {
         width: 14px;
@@ -546,41 +586,52 @@ body.b3-theme-dark,
         max-width: 0;
         opacity: 0;
         overflow: hidden;
-        transition: max-width 0.3s, opacity 0.3s;
-        margin-right: 4px;
+        margin-left: 0;
+        transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                    opacity 0.3s ease,
+                    margin-left 0.4s ease;
     }
 
     &.tb-settings {
-        background-color: #44403c;
-        border-color: #44403c;
+        background-color: var(--btn-settings);
+        border-color: var(--btn-settings);
         color: var(--b3-font-color);
 
         &:hover {
-            background-color: #57534e;
+            background-color: var(--btn-settings-hover);
         }
     }
 
     &.tb-help {
-        background-color: #4c1d95;
-        border-color: #4c1d95;
+        background-color: var(--btn-help);
+        border-color: var(--btn-help);
         color: var(--b3-font-color);
 
         &:hover {
-            background-color: #5b21b6;
+            background-color: var(--btn-help-hover);
         }
     }
 
     &:hover {
-        width: 110px;
+        width: calc(100% - 12px);
         border-radius: 14px;
-        justify-content: center;
-        gap: 8px;
+        z-index: 2;
+        transition-delay: 0s;
 
         .rss-bottom-btn-text {
             max-width: 80px;
             opacity: 1;
+            margin-left: 6px;
         }
     }
+}
+
+// Hide sibling bottom button on hover
+.rss-bottom-bar:has(.tb-settings:hover) .tb-help,
+.rss-bottom-bar:has(.tb-help:hover) .tb-settings {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
 }
 
 // Unread badge on subscription list items
@@ -609,31 +660,24 @@ body.b3-theme-dark,
 @media (hover: none) {
     .save-to-siyuan-btn,
     .rss-add-btn-enhanced,
-    .rss-action-btn-enhanced,
-    .rss-bottom-btn {
+    .rss-action-btn-enhanced {
         &:hover {
             width: auto !important;
-            gap: 0 !important;
             padding: 0 !important;
             border-radius: 50% !important;
             justify-content: center !important;
         }
-        
-        .save-to-siyuan-btn-text,
-        .rss-add-btn-text,
-        .rss-action-btn-text,
-        .rss-bottom-btn-text {
-            max-width: 0 !important;
-            opacity: 0 !important;
-            overflow: hidden !important;
+    }
+
+    .rss-bottom-btn {
+        &:hover {
+            width: 28px !important;
+            border-radius: 14px !important;
+            z-index: 1 !important;
         }
-    }
-    
-    .rss-bottom-btn:hover {
-        width: 28px !important;
-        border-radius: 14px !important;
-    }
-    
+}
+
+
     // Keep all action buttons visible on touch (no sibling hiding)
     .subscription-actions:has(.mark-read-rss:hover) .refresh-rss,
     .subscription-actions:has(.mark-read-rss:hover) .delete-rss,
@@ -641,6 +685,13 @@ body.b3-theme-dark,
     .subscription-actions:has(.refresh-rss:hover) .delete-rss,
     .subscription-actions:has(.delete-rss:hover) .mark-read-rss,
     .subscription-actions:has(.delete-rss:hover) .refresh-rss {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+
+    // Keep bottom buttons visible on touch (no sibling hiding)
+    .rss-bottom-bar:has(.tb-settings:hover) .tb-help,
+    .rss-bottom-bar:has(.tb-help:hover) .tb-settings {
         opacity: 1 !important;
         pointer-events: auto !important;
     }

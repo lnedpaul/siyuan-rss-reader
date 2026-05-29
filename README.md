@@ -14,7 +14,8 @@ A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyu
 - **Dark Mode**: Auto-follows SiYuan theme (light/dark)
 
 ### UI/UX
-- **Dock Integration**: Native dock panel with 8 position options (left/right/bottom sides)
+- **Tab-based Integration**: Opens in a SiYuan tab, no dock panel conflicts
+- **Unread Count Badges**: Real-time unread badges on subscription items, capped at `99+`
 - **Resizable Layout**: Drag to adjust sidebar/article list/content panel sizes
 - **Infinite Scroll**: Auto-load more articles when scrolling to bottom
 - **Keyboard Shortcuts**: Full keyboard navigation support
@@ -24,11 +25,24 @@ A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyu
 | Key | Action |
 |-----|--------|
 | `J/K` | Previous/Next article |
+| `Space` | Scroll article content down one page |
 | `O` | Open original link |
 | `S` | Save to SiYuan |
 | `R` | Refresh current feed |
 | `A` | Mark all as read |
 | `?` | Show help |
+
+### 📡 Built-in Feeds
+
+The plugin comes with **31 pre-configured RSS feeds** across 5 categories:
+
+| Category | Feeds |
+|----------|-------|
+| **Chinese Tech & Design** | 少数派, 爱范儿, 优设, 钛媒体, 机核网, 36氪, 阮一峰的网络日志 |
+| **News** | China News (8 categories: breaking/domestic/world/society/sports/culture/military), IT之家, Macau Cultural Affairs |
+| **Finance & Economy** | China News finance/stock/fortune/energy/real estate, East Money |
+| **Weather** | China Meteorological Administration (5 feeds: alerts/briefings/media/operations/tech) |
+| **Academic Journals** | arXiv CS, PNAS, Nature |
 
 ## 🚀 Installation
 

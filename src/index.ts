@@ -36,7 +36,7 @@ const READ_STATUS_NAME = "rss_read_status";
 const CACHED_ARTICLES_NAME = "rss_cached_articles";
 const SETTINGS_NAME = "rss_settings";
 const DEFAULT_ARTICLES_PER_PAGE = 20;
-const MAX_CACHED_ARTICLES = 100;
+const MAX_CACHED_ARTICLES = 2000;
 
 interface Subscription {
     id: string;
@@ -95,9 +95,8 @@ interface Settings {
     articlesPerPage: number;
     autoMarkRead: boolean;
     layout: 'horizontal' | 'vertical';
-    enableKeyboardShortcuts: boolean;
-    showUnreadOnly: boolean;
-    fontSize: number; // 12-20px
+        enableKeyboardShortcuts: boolean;
+        fontSize: number; // 12-20px
     autoRefreshInterval: number;
     lastUsedNotebookId?: string;
     useTemplate: boolean;
@@ -111,7 +110,6 @@ const defaultSettings: Settings = {
     autoMarkRead: true,
     layout: 'vertical',
     enableKeyboardShortcuts: true,
-    showUnreadOnly: false,
     fontSize: 14,
     autoRefreshInterval: 0,
     lastUsedNotebookId: "",
@@ -128,7 +126,8 @@ const SHORTCUTS = {
     SAVE_TO_SIYUAN: 's',
     REFRESH: 'r',
     MARK_ALL_READ: 'a',
-    HELP: '?'
+    HELP: '?',
+    PAGE_DOWN: ' '
 };
 
 export default class RSSReaderPlugin extends Plugin {
@@ -141,6 +140,7 @@ export default class RSSReaderPlugin extends Plugin {
     private currentArticleIndex: number = -1;
     private container: HTMLElement | null = null;
     private updateInterval: NodeJS.Timeout | null = null;
+    private cleanupInterval: NodeJS.Timeout | null = null;
     private boundHandleKeyboard!: (e: KeyboardEvent) => void;
     private listScrollHandler!: () => void;
     private isLoadingMore: boolean = false;
@@ -299,11 +299,55 @@ export default class RSSReaderPlugin extends Plugin {
             beforeDestroy: function () {
             },
             destroy: function () {
+                // Clean up global event listeners when tab is closed
+                document.removeEventListener('keydown', plugin.boundHandleKeyboard);
+                if (plugin.resizerMoveHandler) {
+                    document.removeEventListener('mousemove', plugin.resizerMoveHandler);
+                    plugin.resizerMoveHandler = null;
+                }
+                if (plugin.resizerUpHandler) {
+                    document.removeEventListener('mouseup', plugin.resizerUpHandler);
+                    plugin.resizerUpHandler = null;
+                }
+                if (plugin.vResizerMoveHandler) {
+                    document.removeEventListener('mousemove', plugin.vResizerMoveHandler);
+                    plugin.vResizerMoveHandler = null;
+                }
+                if (plugin.vResizerUpHandler) {
+                    document.removeEventListener('mouseup', plugin.vResizerUpHandler);
+                    plugin.vResizerUpHandler = null;
+                }
+                plugin.isResizing = false;
+                plugin.clearAllTimeouts();
+                if (plugin.readStatusSaveTimer) {
+                    clearTimeout(plugin.readStatusSaveTimer);
+                    plugin.readStatusSaveTimer = null;
+                }
+                if (plugin.scrollThrottleTimer) {
+                    clearTimeout(plugin.scrollThrottleTimer);
+                    plugin.scrollThrottleTimer = null;
+                }
+                if (plugin.saveDebounceTimer) {
+                    clearTimeout(plugin.saveDebounceTimer);
+                    plugin.saveDebounceTimer = null;
+                }
+                if (plugin.container && plugin.listScrollHandler) {
+                    const articleList = plugin.container.querySelector("#rssArticleList");
+                    if (articleList) {
+                        articleList.removeEventListener("scroll", plugin.listScrollHandler);
+                    }
+                }
                 plugin.rssTab = null;
                 plugin.rssTabOpen = false;
                 plugin.container = null;
             },
             resize: function () {
+                if (plugin.container && plugin.container.isConnected) {
+                    const articleList = plugin.container.querySelector("#rssArticleList") as HTMLElement;
+                    if (articleList && plugin.currentArticles.length > 0) {
+                        plugin.checkAndLoadMore(plugin.container);
+                    }
+                }
             },
             init: function (this: any) {
                 try {
@@ -547,6 +591,10 @@ export default class RSSReaderPlugin extends Plugin {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
         }
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
         
         // Clear all pending timeouts
         this.clearAllTimeouts();
@@ -760,6 +808,7 @@ export default class RSSReaderPlugin extends Plugin {
             case SHORTCUTS.REFRESH: e.preventDefault(); if (this.container) this.refreshCurrentFeed(this.container); break;
             case SHORTCUTS.MARK_ALL_READ: e.preventDefault(); if (this.container) this.markAllRead(this.container); break;
             case SHORTCUTS.HELP: e.preventDefault(); this.showHelpDialog(); break;
+            case SHORTCUTS.PAGE_DOWN: e.preventDefault(); this.scrollArticleContentPage(); break;
         }
     }
     
@@ -834,11 +883,20 @@ export default class RSSReaderPlugin extends Plugin {
         if (article) this.saveArticleToSiYuan(article);
     }
 
+    private scrollArticleContentPage() {
+        if (!this.container) return;
+        const content = this.container.querySelector("#rssArticleContent") as HTMLElement;
+        if (content) {
+            content.scrollBy({ top: content.clientHeight * 0.9, behavior: 'smooth' });
+        }
+    }
+
     // ==================== UI ====================
 
-private initSidebarUI(container: HTMLElement) {
+    private initSidebarUI(container: HTMLElement, force = false) {
         // Guard: prevent double render (e.g. addTab.init + ensureTabContent both firing)
-        if (container.querySelector('.rss-reader-container')) return;
+        // Use force=true to skip guard when rebuilding layout (e.g. after settings change)
+        if (!force && container.querySelector('.rss-reader-container')) return;
 
         // Reset event binding flag before rebuilding DOM
         this.subscriptionEventsBound = false;
@@ -862,9 +920,11 @@ private initSidebarUI(container: HTMLElement) {
             this.vResizerUpHandler = null;
         }
         // Reset resizing flag
+
+        // Load unread counts BEFORE rendering so badges appear immediately
         this.isResizing = false;
         
-        const isH = this.settings.layout === 'horizontal';
+        const isH = this.settings.layout === 'vertical';
         const listFlex = isH ? '0 0 35%' : '0 0 40%';
         const listBorder = isH ? 'border-right:1px solid var(--b3-border-color)' : 'border-bottom:1px solid var(--b3-border-color)';
         const listMin = isH ? 'min-width:120px' : 'min-height:80px';
@@ -916,7 +976,6 @@ private initSidebarUI(container: HTMLElement) {
         this.setupEventListeners(container);
         this.setupInfiniteScroll(container);
         
-        // Load unread counts for badge display
         this.updateUnreadCounts().then(() => {
             const rssList = container.querySelector("#rssList");
             if (rssList) {
@@ -970,7 +1029,7 @@ private initSidebarUI(container: HTMLElement) {
                         <div style="font-size:${fs.listItem};font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
                             ${sub.name || sub.url}
                         </div>
-                        ${(this.unreadCounts.get(sub.id) ?? 0) > 0 ? `<span class="unread-badge">${this.unreadCounts.get(sub.id)}</span>` : ''}
+                        ${(this.unreadCounts.get(sub.id) ?? 0) > 0 ? `<span class="unread-badge">${this.formatUnreadCount(this.unreadCounts.get(sub.id)!)}</span>` : ''}
                     </div>
                     <!-- Action buttons: Mark Read, Refresh, Delete -->
                     <div class="subscription-actions">
@@ -1138,7 +1197,7 @@ private initSidebarUI(container: HTMLElement) {
                 if (!currentArticleList) return;
                 const parent = currentArticleList.parentElement;
                 if (!parent) return;
-                if (this.settings.layout === 'horizontal') {
+                if (this.settings.layout === 'vertical') {
                     startX = e.clientX;
                     startPct = (currentArticleList.offsetWidth / parent.offsetWidth) * 100;
                 } else {
@@ -1146,7 +1205,7 @@ private initSidebarUI(container: HTMLElement) {
                     startPct = (currentArticleList.offsetHeight / parent.offsetHeight) * 100;
                 }
                 vResizer.style.background = "var(--b3-theme-primary)";
-                const cursor = this.settings.layout === 'horizontal' ? 'col-resize' : 'row-resize';
+                const cursor = this.settings.layout === 'vertical' ? 'col-resize' : 'row-resize';
                 document.body.style.cursor = cursor;
                 document.body.style.userSelect = "none";
             });
@@ -1158,7 +1217,7 @@ private initSidebarUI(container: HTMLElement) {
                 if (!currentArticleList || !currentArticleList.parentElement) return;
                 const parent = currentArticleList.parentElement;
                 try {
-                    if (this.settings.layout === 'horizontal') {
+                    if (this.settings.layout === 'vertical') {
                         const delta = e.clientX - startX;
                         const newPct = startPct + (delta / parent.offsetWidth) * 100;
                         if (newPct >= 10 && newPct <= 80) currentArticleList.style.flexBasis = `${newPct}%`;
@@ -1264,20 +1323,19 @@ private initSidebarUI(container: HTMLElement) {
                     this.lastBackgroundFetchTime.set(sub.id, Date.now());
                     
                     this.fetchAndCacheArticles(sub).then(articles => {
-                        // Only update if user hasn't switched to another subscription
+                        // Always update unread badge regardless of current selection
+                        const unread = articles.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
+                        this.unreadCounts.set(sub.id, unread);
+                        const listEl = container.querySelector("#rssList");
+                        if (listEl) {
+                            listEl.innerHTML = this.renderSubscriptionListHTML();
+                        }
+                        // Only update article list if user hasn't switched to another subscription
                         if (this.currentSubscriptionIndex === index) {
                             this.currentArticles = articles;
                             this.displayedArticleCount = 0;
                             if (countEl) {
-                                const unread = articles.filter(a => !a.isRead).length;
                                 countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
-                            }
-                            // Update unread badge
-                            const unread = articles.filter((a: Article) => !a.isRead).length;
-                            this.unreadCounts.set(sub.id, unread);
-                            const listEl = container.querySelector("#rssList");
-                            if (listEl) {
-                                listEl.innerHTML = this.renderSubscriptionListHTML();
                             }
                             this.renderArticleList(container);
                             this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
@@ -1551,8 +1609,11 @@ private initSidebarUI(container: HTMLElement) {
             // Use smart merge to prevent data loss during sync
             await this.saveSubscriptionsWithMerge();
             
-            container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
-            this.setupSubscriptionEvents(container);
+            const rssList = container.querySelector("#rssList");
+            if (rssList) {
+                rssList.innerHTML = this.renderSubscriptionListHTML();
+                this.setupSubscriptionEvents(container);
+            }
             dialog.destroy();
             showMessage(this.i18n.add + " " + this.i18n.success, 2000);
         };
@@ -1566,6 +1627,8 @@ private initSidebarUI(container: HTMLElement) {
         
         const el = container.querySelector("#rssArticleList") as HTMLElement;
         const perPage = this.settings.articlesPerPage;
+
+        if (!el) return;
 
         if (!append) {
             this.displayedArticleCount = 0;
@@ -2150,8 +2213,7 @@ private initSidebarUI(container: HTMLElement) {
             map.set(a.id, a);
         });
         return Array.from(map.values())
-            .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
-            .slice(0, MAX_CACHED_ARTICLES);
+            .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
     }
 
     private async getCachedArticles(subId: string): Promise<Article[]> {
@@ -2295,10 +2357,30 @@ private initSidebarUI(container: HTMLElement) {
             } else {
                 this.unreadCounts.set(subscriptionId, 0);
             }
+            this.updateBadgeDOM(subscriptionId);
         }
         
         // Trigger batch save
         this.batchSaveReadStatus();
+    }
+
+    private updateBadgeDOM(subscriptionId: string): void {
+        if (!this.container?.isConnected) return;
+        const index = this.subscriptions.findIndex(s => s.id === subscriptionId);
+        if (index < 0) return;
+        const badge = this.container.querySelector(`.rss-item[data-index="${index}"] .unread-badge`);
+        const count = this.unreadCounts.get(subscriptionId) ?? 0;
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = this.formatUnreadCount(count);
+            } else {
+                badge.remove();
+            }
+        }
+    }
+
+    private formatUnreadCount(count: number): string {
+        return count > 99 ? '99+' : String(count);
     }
 
     /**
@@ -2351,9 +2433,11 @@ private initSidebarUI(container: HTMLElement) {
         try {
             const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
             const subscriptionIds = new Set(this.subscriptions.map(s => s.id));
-            const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 days in milliseconds
+            const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+            const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
             
             let cleanedCount = 0;
+            let trimmedCount = 0;
             const keysToRemove: string[] = [];
             
             for (const subId of Object.keys(cached)) {
@@ -2363,7 +2447,6 @@ private initSidebarUI(container: HTMLElement) {
                 if (!subscriptionIds.has(subId)) {
                     keysToRemove.push(subId);
                     cleanedCount++;
-                    logger.log(`[Cache Cleanup] Removed orphaned cache for deleted subscription: ${subId}`);
                     continue;
                 }
                 
@@ -2371,7 +2454,21 @@ private initSidebarUI(container: HTMLElement) {
                 if (entry.cachedAt < sevenDaysAgo) {
                     keysToRemove.push(subId);
                     cleanedCount++;
-                    logger.log(`[Cache Cleanup] Removed expired cache for subscription: ${subId} (cached ${Math.floor((Date.now() - entry.cachedAt) / (24 * 60 * 60 * 1000))} days ago)`);
+                    continue;
+                }
+                
+                // Trim individual articles older than 90 days within active subscriptions
+                if (entry.articles && entry.articles.length > 0) {
+                    const beforeCount = entry.articles.length;
+                    entry.articles = entry.articles.filter(a => {
+                        const pubTime = new Date(a.pubDate).getTime();
+                        return !isNaN(pubTime) && pubTime > ninetyDaysAgo;
+                    });
+                    // Also cap by MAX_CACHED_ARTICLES as safety net
+                    if (entry.articles.length > MAX_CACHED_ARTICLES) {
+                        entry.articles = entry.articles.slice(0, MAX_CACHED_ARTICLES);
+                    }
+                    trimmedCount += beforeCount - entry.articles.length;
                 }
             }
             
@@ -2380,10 +2477,23 @@ private initSidebarUI(container: HTMLElement) {
                 delete cached[key];
             }
             
-            // Save cleaned cache
-            if (cleanedCount > 0) {
+            // Save cleaned cache if anything changed
+            if (cleanedCount > 0 || trimmedCount > 0) {
                 await this.saveData(CACHED_ARTICLES_NAME, cached);
-                logger.log(`[Cache Cleanup] Cleaned ${cleanedCount} cache entries`);
+                if (cleanedCount > 0) {
+                    logger.log(`[Cache Cleanup] Removed ${cleanedCount} expired cache entries`);
+                }
+                if (trimmedCount > 0) {
+                    logger.log(`[Cache Cleanup] Trimmed ${trimmedCount} old articles (older than 90 days)`);
+                }
+                // Refresh unread counts after cache modification
+                await this.updateUnreadCounts();
+                if (this.container?.isConnected) {
+                    const rssList = this.container.querySelector("#rssList");
+                    if (rssList) {
+                        rssList.innerHTML = this.renderSubscriptionListHTML();
+                    }
+                }
             }
         } catch (error) {
             logger.error("[Cache Cleanup] Failed to clean cache:", error);
@@ -2573,7 +2683,17 @@ private initSidebarUI(container: HTMLElement) {
     
     // Incremental UI update after refresh
     private async updateUIAfterRefresh(index: number, container: HTMLElement, merged: Article[], cached: Article[]) {
-        if (this.currentSubscriptionIndex !== index || !this.container) {
+        // Always update unread count and badge DOM regardless of current selection
+        const unread = merged.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
+        this.unreadCounts.set(this.subscriptions[index].id, unread);
+        if (container?.isConnected) {
+            const listEl = container.querySelector("#rssList");
+            if (listEl) {
+                listEl.innerHTML = this.renderSubscriptionListHTML();
+            }
+        }
+        
+        if (this.currentSubscriptionIndex !== index || !container || !container.isConnected) {
             return;
         }
         
@@ -2583,16 +2703,6 @@ private initSidebarUI(container: HTMLElement) {
         
         // Update articles
         this.currentArticles = merged;
-        
-        // Update unread count
-        const unread = merged.filter((a: Article) => !a.isRead).length;
-        this.unreadCounts.set(this.subscriptions[index].id, unread);
-        
-        // Update subscription list UI
-        const listEl = container.querySelector("#rssList");
-        if (listEl) {
-            listEl.innerHTML = this.renderSubscriptionListHTML();
-        }
         
         // Update article count
         const countEl = container.querySelector("#articleCount") as HTMLElement;
@@ -2964,6 +3074,8 @@ ${escaped}
     private startScheduledUpdates() {
         this.updateInterval = setInterval(() => this.checkForUpdates(), 30 * 60 * 1000);
         this.checkForUpdates();
+        // Daily cache cleanup to automatically remove old articles
+        this.cleanupInterval = setInterval(() => this.cleanupCache(), 24 * 60 * 60 * 1000);
     }
 
     private async checkForUpdates() {
@@ -2993,6 +3105,9 @@ ${escaped}
             this.updateInterval = setInterval(() => {
                 if (this.container) this.refreshAllFeeds(this.container);
             }, this.settings.autoRefreshInterval * 60 * 1000);
+        } else {
+            // Keep default background check even when user saves settings with auto-refresh disabled
+            this.updateInterval = setInterval(() => this.checkForUpdates(), 30 * 60 * 1000);
         }
     }
 
@@ -3031,7 +3146,16 @@ ${escaped}
             }
         }
         
-        // Only update UI if there are new articles
+        // Update all subscription badges from refreshed cache
+        if (this.container?.isConnected) {
+            await this.updateUnreadCounts();
+            const listEl = this.container.querySelector("#rssList");
+            if (listEl) {
+                listEl.innerHTML = this.renderSubscriptionListHTML();
+            }
+        }
+        
+        // Update current article list if there are new articles
         if (hasNewArticles && this.currentSubscriptionIndex >= 0 && this.container) {
             const sub = this.subscriptions[this.currentSubscriptionIndex];
             const merged = await this.getCachedArticles(sub.id);
@@ -3163,6 +3287,7 @@ ${escaped}
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">R</kbd></div><div>${this.i18n.helpRefreshFeed}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">A</kbd></div><div>${this.i18n.helpMarkAllRead}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">?</kbd></div><div>${this.i18n.helpShowHelp}</div>
+                    <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">Space</kbd></div><div>${this.i18n.helpPageDown}</div>
                 </div>
             </div>
             <div class="b3-dialog__action">
@@ -3269,7 +3394,7 @@ ${escaped}
             const savedIndex = this.currentSubscriptionIndex;
             this.currentSubscriptionIndex = -1;
             
-            this.initSidebarUI(container);
+            this.initSidebarUI(container, true);
             
             // If a subscription was selected, reload its articles
             if (savedIndex >= 0 && savedIndex < this.subscriptions.length) {
