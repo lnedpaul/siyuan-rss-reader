@@ -1,6 +1,6 @@
 {
   "name": "siyuan-rss-reader",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "RSS reader plugin for SiYuan Note",
   "main": "index.js",
   "repository": {

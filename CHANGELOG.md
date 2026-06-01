@@ -5,6 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.24] - 2026-06-01
+
+### 修复
+
+- **解决思源 v3.6.5 forward proxy context deadline 超时问题**: 改用浏览器 `fetch()` 优先策略，
+  完全绕过思源内核 Go HTTP 客户端超时限制，仅在内核 proxy 作为 CORS 兜底
+- **错误信息友好化**: 不再向用户暴露 Go 内部错误，统一显示友好提示
+
+### 改进
+
+- **超时调整为 30 秒**: 提取为命名常量 `FORWARD_PROXY_TIMEOUT`，便于后续统一调整
+
 ## [0.1.23] - 2026-05-29
 
 ### 新增

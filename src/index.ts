@@ -37,6 +37,7 @@ const CACHED_ARTICLES_NAME = "rss_cached_articles";
 const SETTINGS_NAME = "rss_settings";
 const DEFAULT_ARTICLES_PER_PAGE = 20;
 const MAX_CACHED_ARTICLES = 2000;
+const FORWARD_PROXY_TIMEOUT = 30000;
 
 interface Subscription {
     id: string;
@@ -1366,9 +1367,8 @@ export default class RSSReaderPlugin extends Plugin {
             }
         } catch (error) {
             logger.error("Failed to fetch RSS:", error);
-            const msg = error instanceof Error ? error.message : String(error);
             articleListEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-theme-error);font-size:13px;">
-               ${this.i18n.networkError}: ${msg}
+               ${this.i18n.networkError}
             </div>`;
         }
     }
@@ -1948,24 +1948,45 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== RSS Fetching (via forwardProxy) ====================
 
     private async fetchAndParseRSS(url: string): Promise<{ items: RSSItem[] }> {
-        const response = await fetchSyncPost("/api/network/forwardProxy", {
-            url: url,
-            method: "GET",
-            timeout: 15000,
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }
-        });
+        let xml = "";
 
-        if (response.code !== 0) {
-            throw new Error(`API error: ${response.msg || 'unknown'}`);
+        // Strategy 1: browser fetch (bypasses kernel timeout issues)
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), FORWARD_PROXY_TIMEOUT);
+            const resp = await fetch(url, {
+                signal: controller.signal,
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }
+            });
+            clearTimeout(timer);
+            xml = await resp.text();
+        } catch (fetchErr) {
+            logger.warn("Browser fetch failed, falling back to kernel proxy:", fetchErr);
         }
 
-        if (response.data?.status >= 400) {
-            throw new Error(`HTTP ${response.data.status}`);
-        }
-
-        const xml: string = response.data?.body || "";
+        // Strategy 2: SiYuan kernel forwardProxy (fallback for CORS/unreachable)
         if (!xml) {
-            throw new Error("Empty response");
+            try {
+                const response = await fetchSyncPost("/api/network/forwardProxy", {
+                    url: url,
+                    method: "GET",
+                    timeout: FORWARD_PROXY_TIMEOUT,
+                    headers: { "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }
+                });
+                if (response.code !== 0) {
+                    throw new Error(`API error: ${response.msg || 'unknown'}`);
+                }
+                if (response.data?.status >= 400) {
+                    throw new Error(`HTTP ${response.data.status}`);
+                }
+                xml = response.data?.body || "";
+            } catch (proxyErr) {
+                logger.warn("Kernel proxy fallback also failed:", proxyErr);
+            }
+        }
+
+        if (!xml) {
+            throw new Error(this.i18n.networkError || "Failed to fetch RSS feed");
         }
 
         // Detect HTML/captcha responses instead of XML
