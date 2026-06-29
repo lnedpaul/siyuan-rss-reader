@@ -653,6 +653,12 @@ export default class RSSReaderPlugin extends Plugin {
         if (this.resizerUpHandler) document.removeEventListener('mouseup', this.resizerUpHandler);
         if (this.vResizerMoveHandler) document.removeEventListener('mousemove', this.vResizerMoveHandler);
         if (this.vResizerUpHandler) document.removeEventListener('mouseup', this.vResizerUpHandler);
+
+        // Cleanup subscription event listener
+        if (this.subscriptionEventAbort) {
+            this.subscriptionEventAbort.abort();
+            this.subscriptionEventAbort = null;
+        }
         
         // Cleanup scroll handler
         if (this.container) {
@@ -1070,27 +1076,31 @@ export default class RSSReaderPlugin extends Plugin {
         return html;
     }
 
+    private subscriptionEventAbort: AbortController | null = null;
+
     private setupSubscriptionEvents(container: HTMLElement) {
-        if (this.subscriptionEventsBound) {
-            return;
+        // Always clean up previous handler to prevent duplicate bindings
+        if (this.subscriptionEventAbort) {
+            this.subscriptionEventAbort.abort();
         }
-        this.subscriptionEventsBound = true;
+        this.subscriptionEventAbort = new AbortController();
+        const signal = this.subscriptionEventAbort.signal;
 
         container.addEventListener("click", (e) => {
             const target = e.target as HTMLElement;
-            
+
             const rssList = container.querySelector("#rssList");
             if (!rssList || !rssList.contains(target)) {
                 return;
             }
-            
+
             const addBtn = target.closest("#tbAdd");
             if (addBtn) {
                 e.stopPropagation();
                 this.showAddSubscriptionDialog(container);
                 return;
             }
-            
+
             const deleteBtn = target.closest(".delete-rss");
             if (deleteBtn) {
                 e.stopPropagation();
@@ -1098,7 +1108,7 @@ export default class RSSReaderPlugin extends Plugin {
                 this.deleteSubscription(index, container);
                 return;
             }
-            
+
             const refreshBtn = target.closest(".refresh-rss");
             if (refreshBtn) {
                 e.stopPropagation();
@@ -1106,7 +1116,7 @@ export default class RSSReaderPlugin extends Plugin {
                 this.refreshSubscription(index, container);
                 return;
             }
-            
+
             const markReadBtn = target.closest(".mark-read-rss");
             if (markReadBtn) {
                 e.stopPropagation();
@@ -1114,13 +1124,15 @@ export default class RSSReaderPlugin extends Plugin {
                 this.markSubscriptionRead(index, container);
                 return;
             }
-            
+
             const nameArea = target.closest(".subscription-name");
             if (nameArea) {
                 const index = parseInt((nameArea as HTMLElement).dataset.index!);
                 this.selectSubscription(index, container);
             }
-        });
+        }, { signal });
+
+        this.subscriptionEventsBound = true;
     }
 
     // ==================== Resizer ====================
@@ -1507,7 +1519,6 @@ export default class RSSReaderPlugin extends Plugin {
         }
 
         container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
-        this.setupSubscriptionEvents(container);
         showMessage(this.i18n.deleteSuccess, 2000);
     }
 
@@ -1612,7 +1623,6 @@ export default class RSSReaderPlugin extends Plugin {
             const rssList = container.querySelector("#rssList");
             if (rssList) {
                 rssList.innerHTML = this.renderSubscriptionListHTML();
-                this.setupSubscriptionEvents(container);
             }
             dialog.destroy();
             showMessage(this.i18n.add + " " + this.i18n.success, 2000);
