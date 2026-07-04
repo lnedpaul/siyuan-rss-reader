@@ -2,22 +2,22 @@
   "name": "siyuan-rss-reader",
   "author": "lmedpaul",
   "url": "https://github.com/lnedpaul/siyuan-rss-reader",
-  "version": "0.1.24",
-  "minAppVersion": "3.3.0",
+  "version": "0.1.26",
+  "minAppVersion": "3.7.0",
   "backends": ["all"],
   "frontends": ["all"],
   "disabledInPublish": true,
   "displayName": {
     "default": "RSS Reader",
-    "zh_CN": "RSS 订阅"
+    "zh-CN": "RSS 订阅"
   },
   "description": {
     "default": "A RSS reader plugin for SiYuan Note, allowing you to save articles to notes with one click.",
-    "zh_CN": "思源笔记 RSS 订阅插件，支持一键将文章保存为笔记。"
+    "zh-CN": "思源笔记 RSS 订阅插件，支持一键将文章保存为笔记。"
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README_zh_CN.md"
+    "zh-CN": "README_zh-CN.md"
   },
   "funding": {
     "custom": ["https://github.com/lnedpaul"]

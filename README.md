@@ -10,7 +10,7 @@ A native RSS reader plugin for [SiYuan Note](https://github.com/siyuan-note/siyu
 - **RSS/Atom Subscription Management**: Add, delete, rename feeds with drag-and-drop reordering
 - **Immersive Reading**: Read articles directly within SiYuan with full HTML rendering
 - **One-Click Save to SiYuan**: Automatically parse article content and generate SiYuan documents with original links
-- **Internationalization**: Supports Chinese (zh_CN) and English (en_US), auto-follows SiYuan language setting
+- **Internationalization**: Supports Chinese (zh-CN) and English (en), auto-follows SiYuan language setting
 - **Dark Mode**: Auto-follows SiYuan theme (light/dark)
 
 ### UI/UX
@@ -91,8 +91,8 @@ siyuan-rss-reader/
 │   ├── index.ts          # Main plugin code
 │   ├── index.scss        # Styles
 │   └── i18n/             # Translations
-│       ├── zh_CN.json
-│       └── en_US.json
+│       ├── zh-CN.json
+│       └── en.json
 ├── dist/                 # Build output (generated, not in git)
 ├── docs/                 # Documentation
 ├── plugin.json           # Plugin manifest

@@ -5,6 +5,45 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.26] - 2026-07-04
+
+### 修复
+
+- **保存文档已存在时远程图片未转换**: 修正 `saveArticleToSiYuan` 中文档重名后使用错误的 docId，导致 `netImg2LocalAssets` 指向旧文档而非新文档
+- **表格 Markdown 格式错误**: 将 `<table>` 转换的 Markdown 分隔行 `|---|` 从表格末尾移到表头行与数据行之间，符合标准 Markdown 语法
+- **有序列表渲染错误**: 拆分 `<ol>` 与 `<ul>` 渲染逻辑，有序列表改为 `1. 2. 3.` 编号而非 `-`
+- **缓存清理误删文章**: `cleanupCache` 中无有效 `pubDate` 的文章不再被日期过滤器删除
+- **文章排序行为未定义**: `mergeArticles` 排序增加了 `isNaN` 防御，无效日期排到最后
+- **缓存格式迁移不完整**: 改为逐条检查缓存条目格式，而非仅检查第一条
+
+### 改进
+
+- **自动刷新设置生效**: 插件启动时调用 `setupAutoRefresh()` 而非硬编码的 `startScheduledUpdates()`，用户保存的 `autoRefreshInterval` 设置重启后正确生效
+- **文章列表监听器泄漏修复**: 移除 `renderArticleList` 中不必要的 `removeAttribute('data-events-bound')`，防止每次重渲染累积 click 监听器
+- **删除订阅索引偏移修复**: 删除后按 ID 重新定位当前选中订阅，而非依赖索引位置
+- **模板国际化**: 保存笔记模板中的 `订阅源：`、`日期：`标签改为使用 i18n 键，原文链接格式优化
+- **后台获取错误容忍**: 后台刷新时先成功获取再记录时间戳，失败后不阻塞后续重试
+- **缓存清理增强**: `cleanupReadStatus` 同时清理不再存在于任何缓存中的无时间戳孤立条目
+- **网络请求清理**: `fetchAndParseRSS` 的 abort timer 在 `finally` 中始终清除，不再泄漏
+- **`checkAndLoadMore` 防重入**: 入口添加 `isLoadingMore` 守卫，防止 resize 时竞态
+- **触屏 timeout 管理**: 未追踪的 `setTimeout` 改为 `safeSetTimeout`，统一清理
+
+### 代码质量
+
+- `fetchAndCacheArticles` 中 `generateArticleId` 不再重复计算
+- 添加订阅时 URL 规范化重复检测
+- 移除未使用的 `applyButtonHoverEffect` 方法
+- 移除 `updateUIAfterRefresh` 未使用的 `cached` 参数
+- 修正 icon 注册日志的计数（8→9）
+- 保存按钮 hover 效果统一为纯 CSS（移除 JS 叠加的 `scale(1.1)`）
+
+## [0.1.25] - 2026-06-27
+
+### 改进
+
+- **兼容思源 3.7.0**: i18n 语言文件适配 RFC 5646 标准命名（zh-CN / en-US）
+- **更新 minAppVersion**: 3.3.0 → 3.7.0
+
 ## [0.1.24] - 2026-06-01
 
 ### 修复

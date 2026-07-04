@@ -47,7 +47,7 @@ Currently, the project uses manual testing. Please test your changes thoroughly:
 1. Test with different RSS feeds
 2. Test both light and dark themes
 3. Test keyboard shortcuts
-4. Test internationalization (zh_CN and en_US)
+4. Test internationalization (zh-CN and en-US)
 
 ## 📦 Building for Production
 

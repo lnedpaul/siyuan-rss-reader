@@ -89,6 +89,8 @@
     "allRetriesFailed": "{error}\n\n已尝试 {attempts} 次，请检查网络连接后重试。",
     "useTemplate": "使用模板",
     "templateSiteName": "订阅源名称",
+    "templateSiteNameLabel": "订阅源：",
     "templateDateTime": "保存日期时间",
+    "templateDateTimeLabel": "日期：",
     "templateOriginalLink": "原文链接"
 }

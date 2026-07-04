@@ -89,6 +89,8 @@
     "allRetriesFailed": "{error}\n\nTried {attempts} times, please check network connection and retry.",
     "useTemplate": "Use template",
     "templateSiteName": "Site name",
+    "templateSiteNameLabel": "Site:",
     "templateDateTime": "Save date time",
+    "templateDateTimeLabel": "Date:",
     "templateOriginalLink": "Original link"
 }

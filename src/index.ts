@@ -284,7 +284,7 @@ export default class RSSReaderPlugin extends Plugin {
         // This must be called before addDock() to ensure icons are available
         this.addIcons(icons);
         
-        logger.log('Custom icons registered successfully (8 icons): iconRSSMain, iconRSSAdd, iconRSSRefresh, iconRSSCheck, iconRSSHelp, iconRSSSettings, iconRSSSave, iconRSSDelete, iconRSSMinimize');
+        logger.log('Custom icons registered successfully (9 icons): iconRSSMain, iconRSSAdd, iconRSSRefresh, iconRSSCheck, iconRSSHelp, iconRSSSettings, iconRSSSave, iconRSSDelete, iconRSSMinimize');
     }
 
     // ==================== Lifecycle ====================
@@ -432,7 +432,9 @@ export default class RSSReaderPlugin extends Plugin {
             this.updateUnreadCounts();
         }
 
-        this.startScheduledUpdates();
+        this.setupAutoRefresh();
+        this.checkForUpdates();
+        this.cleanupInterval = setInterval(() => this.cleanupCache(), 24 * 60 * 60 * 1000);
         this.registerKeyboardShortcuts();
     }
 
@@ -736,7 +738,7 @@ export default class RSSReaderPlugin extends Plugin {
     private detectLanguage() {
         try {
             // @ts-ignore
-            const lang = window.siyuan?.config?.lang || "en_US";
+            const lang = window.siyuan?.config?.lang || "en";
             // SiYuan's i18n is handled by the plugin system based on lang
             // We don't need to manually switch - it's automatic
             logger.log("Detected language:", lang);
@@ -1321,9 +1323,8 @@ export default class RSSReaderPlugin extends Plugin {
                 
                 // Only auto-refresh if cache is older than 5 minutes AND no pending request
                 if (cacheAge > this.CACHE_EXPIRY_MS && !this.pendingRequests.has(sub.id)) {
-                    this.lastBackgroundFetchTime.set(sub.id, Date.now());
-                    
                     this.fetchAndCacheArticles(sub).then(articles => {
+                        this.lastBackgroundFetchTime.set(sub.id, Date.now());
                         // Always update unread badge regardless of current selection
                         const unread = articles.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
                         this.unreadCounts.set(sub.id, unread);
@@ -1488,22 +1489,31 @@ export default class RSSReaderPlugin extends Plugin {
             this.unreadCounts.delete(sub.id);
         }
 
+        // Save current selection ID before merge
+        const selectedSubId = this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex < this.subscriptions.length
+            ? this.subscriptions[this.currentSubscriptionIndex].id
+            : null;
+
         // Save with soft delete and sync
         await this.saveSubscriptionsWithMerge();
-        // Note: saveSubscriptionsWithMerge() already removes deleted subscriptions from this.subscriptions
 
-        // Check if the current selected subscription was deleted
-        if (this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex >= this.subscriptions.length) {
-            // Current subscription was deleted, reset selection
-            this.currentSubscriptionIndex = -1;
-            this.currentArticles = [];
-            this.currentArticleIndex = -1;
-            const articleListEl = container.querySelector("#rssArticleList") as HTMLElement;
-            articleListEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle}</div>`;
-            const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
-            contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle}</div>`;
-            const countEl = container.querySelector("#articleCount") as HTMLElement;
-            if (countEl) countEl.textContent = "";
+        // Re-locate selection by ID to handle index shifting
+        if (selectedSubId) {
+            const newIndex = this.subscriptions.findIndex(s => s.id === selectedSubId);
+            if (newIndex >= 0) {
+                this.currentSubscriptionIndex = newIndex;
+            } else {
+                // Current subscription was deleted, reset selection
+                this.currentSubscriptionIndex = -1;
+                this.currentArticles = [];
+                this.currentArticleIndex = -1;
+                const articleListEl = container.querySelector("#rssArticleList") as HTMLElement;
+                articleListEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle}</div>`;
+                const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
+                contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle}</div>`;
+                const countEl = container.querySelector("#articleCount") as HTMLElement;
+                if (countEl) countEl.textContent = "";
+            }
         }
 
         container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
@@ -1590,8 +1600,14 @@ export default class RSSReaderPlugin extends Plugin {
                 return;
             }
 
-            // Check if subscription already exists (by URL)
-            const existingSub = this.subscriptions.find(sub => sub.url === url);
+            // Check if subscription already exists (by URL, normalized)
+            const existingSub = this.subscriptions.find(sub => {
+                try {
+                    return new URL(sub.url).toString() === new URL(url).toString();
+                } catch {
+                    return sub.url === url;
+                }
+            });
             if (existingSub) {
                 showMessage(`${this.i18n.add} ${this.i18n.failed}: ${this.i18n.subscriptionExists}`, 3000);
                 return;
@@ -1633,8 +1649,6 @@ export default class RSSReaderPlugin extends Plugin {
         if (!append) {
             this.displayedArticleCount = 0;
             this.isLoadingMore = false;
-            // Clear event bound marker when re-rendering from scratch
-            el.removeAttribute('data-events-bound');
         }
 
         const start = this.displayedArticleCount;
@@ -1761,6 +1775,7 @@ export default class RSSReaderPlugin extends Plugin {
 
     // Fix #5: Check if article list is full and auto-load more
     private checkAndLoadMore(container: HTMLElement) {
+        if (this.isLoadingMore) return;
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
         if (!articleList || this.currentArticles.length === 0) return;
         
@@ -1911,29 +1926,6 @@ export default class RSSReaderPlugin extends Plugin {
         // Store current article in a weak reference instead of capturing in closure
         const saveBtn = contentEl.querySelector(".save-to-siyuan-btn") as HTMLButtonElement;
         if (saveBtn) {
-            // Add touch support for mobile devices
-            saveBtn.addEventListener('touchstart', () => {
-                saveBtn.style.transform = "scale(1.1)";
-                saveBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.25)";
-            }, { passive: true });
-
-            saveBtn.addEventListener('touchend', () => {
-                setTimeout(() => {
-                    saveBtn.style.transform = "scale(1)";
-                    saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
-                }, 150);
-            }, { passive: true });
-
-            // Keep mouse events for desktop
-            saveBtn.onmouseenter = () => {
-                saveBtn.style.transform = "scale(1.1)";
-                saveBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.25)";
-            };
-            saveBtn.onmouseleave = () => {
-                saveBtn.style.transform = "scale(1)";
-                saveBtn.style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
-            };
-            
             saveBtn.onclick = () => {
                 // Lookup article by ID instead of capturing it in closure
                 const articleId = saveBtn.getAttribute('data-article-id');
@@ -1951,17 +1943,18 @@ export default class RSSReaderPlugin extends Plugin {
         let xml = "";
 
         // Strategy 1: browser fetch (bypasses kernel timeout issues)
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FORWARD_PROXY_TIMEOUT);
         try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), FORWARD_PROXY_TIMEOUT);
             const resp = await fetch(url, {
                 signal: controller.signal,
                 headers: { "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }
             });
-            clearTimeout(timer);
             xml = await resp.text();
         } catch (fetchErr) {
             logger.warn("Browser fetch failed, falling back to kernel proxy:", fetchErr);
+        } finally {
+            clearTimeout(timer);
         }
 
         // Strategy 2: SiYuan kernel forwardProxy (fallback for CORS/unreachable)
@@ -2139,12 +2132,13 @@ export default class RSSReaderPlugin extends Plugin {
                     thumbnailUrl = imgMatch[1];
                 }
             }
+            const articleId = this.generateArticleId(item.link);
                 
             return {
                 ...item,
-                id: this.generateArticleId(item.link),
+                id: articleId,
                 subscriptionId: sub.id,
-                isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
+                isRead: this.readStatus[articleId]?.isRead || false,
                 cachedAt: Date.now(),
                 thumbnail: thumbnailUrl || undefined // Only set if found
             } as Article;
@@ -2234,7 +2228,14 @@ export default class RSSReaderPlugin extends Plugin {
             map.set(a.id, a);
         });
         return Array.from(map.values())
-            .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+            .sort((a, b) => {
+                const tA = new Date(a.pubDate).getTime();
+                const tB = new Date(b.pubDate).getTime();
+                if (isNaN(tA) && isNaN(tB)) return 0;
+                if (isNaN(tA)) return 1;
+                if (isNaN(tB)) return -1;
+                return tB - tA;
+            });
     }
 
     private async getCachedArticles(subId: string): Promise<Article[]> {
@@ -2414,31 +2415,23 @@ export default class RSSReaderPlugin extends Plugin {
             const cached: any = await this.loadData(CACHED_ARTICLES_NAME);
             if (!cached || typeof cached !== 'object') return;
             
-            // Check if already migrated (has cachedAt property)
-            const firstKey = Object.keys(cached)[0];
-            if (firstKey && cached[firstKey]?.cachedAt) {
-                logger.log("[Cache Migration] Cache format is already up-to-date");
-                return;
-            }
-            
-            // Migrate old format to new format
-            logger.log("[Cache Migration] Migrating cache format...");
-            const migrated: CachedArticles = {};
-            let migratedCount = 0;
-            
-            for (const [subId, articles] of Object.entries(cached)) {
-                if (Array.isArray(articles)) {
-                    migrated[subId] = {
-                        articles: articles,
-                        cachedAt: Date.now() // Use current time for migrated entries
+            let needsSave = false;
+            for (const [subId, data] of Object.entries(cached)) {
+                // Old format: subId -> Article[]
+                if (Array.isArray(data)) {
+                    cached[subId] = {
+                        articles: data,
+                        cachedAt: Date.now()
                     };
-                    migratedCount++;
+                    needsSave = true;
                 }
             }
             
-            if (migratedCount > 0) {
-                await this.saveData(CACHED_ARTICLES_NAME, migrated);
-                logger.log(`[Cache Migration] Successfully migrated ${migratedCount} cache entries`);
+            if (needsSave) {
+                await this.saveData(CACHED_ARTICLES_NAME, cached);
+                logger.log("[Cache Migration] Successfully migrated cache format");
+            } else {
+                logger.log("[Cache Migration] Cache format is already up-to-date");
             }
         } catch (error) {
             logger.error("[Cache Migration] Failed to migrate cache format:", error);
@@ -2483,7 +2476,8 @@ export default class RSSReaderPlugin extends Plugin {
                     const beforeCount = entry.articles.length;
                     entry.articles = entry.articles.filter(a => {
                         const pubTime = new Date(a.pubDate).getTime();
-                        return !isNaN(pubTime) && pubTime > ninetyDaysAgo;
+                        if (isNaN(pubTime)) return true; // Keep articles without valid dates
+                        return pubTime > ninetyDaysAgo;
                     });
                     // Also cap by MAX_CACHED_ARTICLES as safety net
                     if (entry.articles.length > MAX_CACHED_ARTICLES) {
@@ -2532,11 +2526,24 @@ export default class RSSReaderPlugin extends Plugin {
             
             if (currentSize === 0) return;
             
+            // Build set of all cached article IDs to identify orphaned entries
+            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+            const cachedArticleIds = new Set<string>();
+            for (const entry of Object.values(cached)) {
+                if (entry?.articles) {
+                    entry.articles.forEach((a: Article) => cachedArticleIds.add(a.id));
+                }
+            }
+            
             let removedCount = 0;
             const keysToRemove: string[] = [];
             
             for (const [articleId, status] of Object.entries(this.readStatus)) {
                 if (status.readAt && status.readAt < thirtyDaysAgo) {
+                    keysToRemove.push(articleId);
+                    removedCount++;
+                } else if (!status.readAt && !cachedArticleIds.has(articleId)) {
+                    // Entries without readAt (from migration) whose article no longer exists
                     keysToRemove.push(articleId);
                     removedCount++;
                 }
@@ -2693,7 +2700,7 @@ export default class RSSReaderPlugin extends Plugin {
             await this.saveSubscriptionsWithMerge();
             
             // Incremental UI update
-            await this.updateUIAfterRefresh(index, container, merged, cached);
+            await this.updateUIAfterRefresh(index, container, merged);
             
             showMessage(this.i18n.refreshSuccess, 1500);
             
@@ -2703,7 +2710,7 @@ export default class RSSReaderPlugin extends Plugin {
     }
     
     // Incremental UI update after refresh
-    private async updateUIAfterRefresh(index: number, container: HTMLElement, merged: Article[], cached: Article[]) {
+    private async updateUIAfterRefresh(index: number, container: HTMLElement, merged: Article[]) {
         // Always update unread count and badge DOM regardless of current selection
         const unread = merged.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
         this.unreadCounts.set(this.subscriptions[index].id, unread);
@@ -2791,15 +2798,15 @@ export default class RSSReaderPlugin extends Plugin {
         
         // Meta info lines
         if (showSiteName && siteName) {
-            lines.push(`订阅源：${siteName}`);
+            lines.push(`${this.i18n.templateSiteNameLabel}: ${siteName}`);
         }
         
         if (showDateTime) {
-            lines.push(`日期：${date} ${time}`);
+            lines.push(`${this.i18n.templateDateTimeLabel}: ${date} ${time}`);
         }
         
         if (showLink && article.link) {
-            lines.push(`链接：[${article.link}](${article.link})`);
+            lines.push(`> [${this.i18n.originalLink}](${article.link})`);
         }
         
         // Bottom separator
@@ -2866,6 +2873,7 @@ export default class RSSReaderPlugin extends Plugin {
             });
             logger.log("Create doc response:", JSON.stringify(res).substring(0, 500));
 
+            let docId: string;
             if (res.code === 201 || res.code === 202) {
                 // File already exists, use unique suffix
                 const uniqueName = `${fileName}_${Date.now().toString(36)}`;
@@ -2878,12 +2886,13 @@ export default class RSSReaderPlugin extends Plugin {
                     showMessage(`${this.i18n.saveFailed}: ${this.i18n.docExists}`, 3000);
                     return;
                 }
+                docId = res2.data;
             } else if (!res.data) {
                 showMessage(`${this.i18n.saveFailed}: ${this.i18n.docCreateFailed}`, 3000);
                 return;
+            } else {
+                docId = res.data;
             }
-
-            const docId = res.data;
 
             // Step 2: Flush transaction
             await fetchSyncPost("/api/sqlite/flushTransaction", {}).catch(() => {});
@@ -3019,13 +3028,24 @@ export default class RSSReaderPlugin extends Plugin {
                 }
                 return src ? (`![${alt}](${src})\n`) : "";
             }
-            case "ul":
-            case "ol": {
+            case "ul": {
                 let result = "\n";
                 Array.from(el.children).forEach((child) => {
                     if (child.tagName.toLowerCase() === "li") {
                         const inner = this._nodeToMarkdown(child, depth + 1).trim();
                         result += `- ${inner}\n`;
+                    }
+                });
+                return result + "\n";
+            }
+            case "ol": {
+                let result = "\n";
+                let count = 1;
+                Array.from(el.children).forEach((child) => {
+                    if (child.tagName.toLowerCase() === "li") {
+                        const inner = this._nodeToMarkdown(child, depth + 1).trim();
+                        result += `${count}. ${inner}\n`;
+                        count++;
                     }
                 });
                 return result + "\n";
@@ -3057,7 +3077,7 @@ ${escaped}
 `;
             }
             case "table": {
-                // Skip table structure - extract plain text to avoid malformed table markdown
+                // Build markdown table from HTML table elements
                 const rows: string[] = [];
                 el.querySelectorAll("tr").forEach((tr) => {
                     const cells: string[] = [];
@@ -3067,10 +3087,13 @@ ${escaped}
                     if (cells.length > 0) rows.push(cells.join(" | "));
                 });
                 if (rows.length === 0) return "";
-                // Build proper markdown table with separator row
                 const colCount = (rows[0]?.match(/\|/g) || []).length + 1;
                 const sep = Array(colCount).fill("---").join(" | ");
-                return "\n" + rows.join("\n") + "\n" + sep + "\n\n";
+                // First row as header, separator in the middle, rest as data rows
+                const headerRow = rows[0];
+                const dataRows = rows.slice(1);
+                if (dataRows.length === 0) return "\n" + headerRow + "\n" + sep + "\n\n";
+                return "\n" + headerRow + "\n" + sep + "\n" + dataRows.join("\n") + "\n\n";
             }
             case "hr":
                 return "\n---\n\n";
@@ -3101,26 +3124,65 @@ ${escaped}
 
     private async checkForUpdates() {
         if (this.subscriptions.length === 0) return;
-        let count = 0;
+        let newArticleCount = 0;
+
         for (const sub of this.subscriptions) {
             try {
                 const feed = await this.fetchAndParseRSS(sub.url);
-                if (feed.items?.length > 0 && feed.items[0].pubDate) {
-                    const latest = new Date(feed.items[0].pubDate).getTime();
-                    if (latest > (sub.lastFetchTime || 0)) {
-                        count++;
-                        sub.lastFetchTime = Date.now();
-                    }
+                if (!feed.items?.length) continue;
+
+                const cached = await this.getCachedArticles(sub.id);
+                const newItems = feed.items.map(item => ({
+                    ...item,
+                    id: this.generateArticleId(item.link),
+                    subscriptionId: sub.id,
+                    cachedAt: Date.now(),
+                    thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
+                } as Article));
+                const merged = this.mergeArticles(newItems, cached);
+
+                if (merged.length > cached.length) {
+                    await this.cacheArticles(sub.id, merged);
+                    sub.lastFetchTime = Date.now();
+                    sub.updatedAt = Date.now();
+                    newArticleCount += merged.length - cached.length;
+
+                    const unread = merged.filter(a =>
+                        !(this.readStatus[a.id]?.isRead || a.isRead)
+                    ).length;
+                    this.unreadCounts.set(sub.id, unread);
                 }
             } catch (e) {
                 // Silent fail during background checks
             }
         }
-        if (count > 0) showMessage(`${this.i18n.newArticles}: ${count}`, 3000);
+
         await this.saveSubscriptionsWithMerge();
+
+        if (newArticleCount > 0 && this.container?.isConnected) {
+            const listEl = this.container.querySelector("#rssList");
+            if (listEl) {
+                listEl.innerHTML = this.renderSubscriptionListHTML();
+            }
+            if (this.currentSubscriptionIndex >= 0) {
+                const sub = this.subscriptions[this.currentSubscriptionIndex];
+                const merged = await this.getCachedArticles(sub.id);
+                if (merged.length > this.currentArticles.length) {
+                    await this.updateUIAfterRefresh(
+                        this.currentSubscriptionIndex,
+                        this.container,
+                        merged
+                    );
+                }
+            }
+        }
+
+        if (newArticleCount > 0) {
+            showMessage(`${this.i18n.newArticles}: ${newArticleCount}`, 3000);
+        }
     }
 
-    private setupAutoRefresh(container: HTMLElement) {
+    private setupAutoRefresh() {
         if (this.updateInterval) { clearInterval(this.updateInterval); this.updateInterval = null; }
         if (this.settings.autoRefreshInterval > 0) {
             this.updateInterval = setInterval(() => {
@@ -3180,7 +3242,7 @@ ${escaped}
         if (hasNewArticles && this.currentSubscriptionIndex >= 0 && this.container) {
             const sub = this.subscriptions[this.currentSubscriptionIndex];
             const merged = await this.getCachedArticles(sub.id);
-            await this.updateUIAfterRefresh(this.currentSubscriptionIndex, container, merged, []);
+            await this.updateUIAfterRefresh(this.currentSubscriptionIndex, container, merged);
         }
         
         showMessage(hasNewArticles ? this.i18n.newArticles || this.i18n.refreshSuccess : this.i18n.refreshSuccess, 2000);
@@ -3406,7 +3468,7 @@ ${escaped}
             this.settings.autoRefreshInterval = parseInt((dialog.element.querySelector("#autoRefreshInterval") as HTMLSelectElement).value);
 
             await this.saveData(SETTINGS_NAME, this.settings);
-            this.setupAutoRefresh(container);
+            this.setupAutoRefresh();
             
             // Re-render entire UI to apply layout and font changes
             // initSidebarUI will rebuild all DOM and rebind events
@@ -3512,25 +3574,6 @@ ${escaped}
         }
     }
 
-    /**
-     * Apply hover/touch effect to action buttons
-     * Supports both mouse and touch interactions for mobile compatibility
-     * @param button - The button element
-     * @param isActive - Whether the button is in active/hover state
-     */
-    private applyButtonHoverEffect(button: HTMLElement, isActive: boolean): void {
-        // Only manage the hovering class on parent container
-        // All button styling is now handled by CSS
-        const actionsContainer = button.closest('.subscription-actions');
-        if (actionsContainer) {
-            if (isActive) {
-                actionsContainer.classList.add('hovering');
-            } else {
-                actionsContainer.classList.remove('hovering');
-            }
-        }
-    }
-
     private formatDate(dateStr: string): string {
         const date = new Date(dateStr);
         if (isNaN(date.getTime())) return dateStr;
@@ -3544,7 +3587,7 @@ ${escaped}
         if (days === 1) return this.i18n.yesterday;
         if (days < 7) return `${days}${this.i18n.daysAgo}`;
         // @ts-ignore
-        const lang = window.siyuan?.config?.lang || 'en_US';
+        const lang = window.siyuan?.config?.lang || 'en';
         const locale = lang.replace('_', '-');
         return date.toLocaleDateString(locale);
     }
