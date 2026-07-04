@@ -414,6 +414,19 @@ body.b3-theme-dark,
 }
 
 // Article count bar: hide when empty
+// Override SiYuan's global user-select:none to allow text selection in article content
+#rssArticleContent {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+// Allow text selection in article list (titles)
+#rssArticleList {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+// Article count bar: hide when empty
 #articleCount:empty {
     display: none;
 }
