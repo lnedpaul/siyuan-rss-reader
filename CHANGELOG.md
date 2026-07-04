@@ -5,6 +5,27 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.27] - 2026-07-04
+
+### 新增
+
+- **文章内容文本选择**: 覆盖思源全局 `user-select:none`，允许在订阅文章和文章列表中选中和复制文字 (PR #3 by @SunsetSail)
+- **致谢**: README 中感谢 @SunsetSail 的贡献
+
+### 修复
+
+- **Resizer 悬停高亮失效**: 修正 CSS ID 不匹配 (`#resizer` → `#rssResizer`, `#verticalResizer` → `#rssVerticalResizer`)
+- **作者名 typo**: `plugin.json` 中 `lmedpaul` → `lnedpaul`
+- **生产环境日志丢失**: `drop_console: true` 改为精确 `pure_funcs`，保留 `console.error`
+
+### 改进
+
+- **事件监听管理重构**: 使用 `AbortController` 替代布尔标志，卸载时自动清理，防止内存泄漏 (PR #3 by @SunsetSail)
+- **订阅列表渲染优化**: 删除/添加订阅后不再重复绑定事件（事件委托天然支持）
+- **移除死代码**: 删除未使用的 `subscriptionEventsBound` 字段
+- **内置订阅源**: 移除 36kr（因其自动过滤逻辑导致循环删除）
+- **README**: 全面同步中英文文档，更新功能列表、项目结构、设置项
+
 ## [0.1.26] - 2026-07-04
 
 ### 修复

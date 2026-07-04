@@ -96,9 +96,8 @@ module.exports = (env, argv) => {
         new TerserPlugin({
           terserOptions: {
             compress: {
-              drop_console: true, // Remove console.log in production
               drop_debugger: true,
-              pure_funcs: ['logger.debug'], // Remove debug calls
+              pure_funcs: ['console.log', 'console.warn', 'console.debug', 'console.info'], // Remove debug log calls, keep console.error
             },
             mangle: {
               toplevel: false, // Don't mangle top-level names (important for plugin exports)

@@ -9,7 +9,6 @@
         { "name": "优设", "url": "https://www.uisdc.com/feed" },
         { "name": "钛媒体", "url": "https://www.tmtpost.com/feed" },
         { "name": "机核网", "url": "https://www.gcores.com/rss" },
-        { "name": "36氪", "url": "https://www.36kr.com/feed" },
         { "name": "阮一峰的网络日志", "url": "https://www.ruanyifeng.com/blog/atom.xml" }
       ]
     },

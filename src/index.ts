@@ -159,8 +159,6 @@ export default class RSSReaderPlugin extends Plugin {
     private saveDebounceTimer: NodeJS.Timeout | null = null;
     // Throttle timer for scroll events to reduce performance overhead
     private scrollThrottleTimer: NodeJS.Timeout | null = null;
-    // Track if subscription events are bound to prevent duplicates
-    private subscriptionEventsBound: boolean = false;
     // Performance optimization: batch read status changes before saving
     private pendingReadStatusChanges: Map<string, { isRead: boolean; readAt: number }> = new Map();
     private readStatusSaveTimer: NodeJS.Timeout | null = null;
@@ -907,9 +905,6 @@ export default class RSSReaderPlugin extends Plugin {
         // Use force=true to skip guard when rebuilding layout (e.g. after settings change)
         if (!force && container.querySelector('.rss-reader-container')) return;
 
-        // Reset event binding flag before rebuilding DOM
-        this.subscriptionEventsBound = false;
-        
         // CRITICAL: Clean up ALL resizer event listeners BEFORE destroying DOM
         // This prevents stale listeners from accessing destroyed elements
         if (this.resizerMoveHandler) {
@@ -1133,8 +1128,6 @@ export default class RSSReaderPlugin extends Plugin {
                 this.selectSubscription(index, container);
             }
         }, { signal });
-
-        this.subscriptionEventsBound = true;
     }
 
     // ==================== Resizer ====================
