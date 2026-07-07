@@ -2,7 +2,7 @@
   "name": "siyuan-rss-reader",
   "author": "lnedpaul",
   "url": "https://github.com/lnedpaul/siyuan-rss-reader",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "minAppVersion": "3.7.0",
   "backends": ["all"],
   "frontends": ["all"],
