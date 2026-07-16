@@ -33,7 +33,6 @@ const logger = {
 const TAB_TYPE = "rss_reader_tab";
 const STORAGE_NAME = "rss_subscriptions";
 const READ_STATUS_NAME = "rss_read_status";
-const CACHED_ARTICLES_NAME = "rss_cached_articles";
 const SETTINGS_NAME = "rss_settings";
 const DEFAULT_ARTICLES_PER_PAGE = 20;
 const MAX_CACHED_ARTICLES = 2000;
@@ -47,6 +46,11 @@ interface Subscription {
     createdAt: number;
     updatedAt: number;
     deleted?: boolean;
+    // CRDT fields for cross-device sync
+    version: number;            // Monotonic version counter (per-device)
+    deviceId: string;           // Last modifying device
+    originDeviceId: string;     // Creating device (immutable)
+    originCreatedAt: number;    // Creation timestamp (immutable)
 }
 
 interface RSSItem {
@@ -104,6 +108,7 @@ interface Settings {
     templateShowLink: boolean;
     templateShowSiteName: boolean;
     templateShowDateTime: boolean;
+    deviceId: string; // Device identifier for CRDT sync
 }
 
 const defaultSettings: Settings = {
@@ -118,6 +123,7 @@ const defaultSettings: Settings = {
     templateShowLink: true,
     templateShowSiteName: true,
     templateShowDateTime: true,
+    deviceId: "",
 };
 
 const SHORTCUTS = {
@@ -155,6 +161,8 @@ export default class RSSReaderPlugin extends Plugin {
     private initialWidth: number = 0;
     // Track all pending timeouts for cleanup
     private pendingTimeouts: NodeJS.Timeout[] = [];
+    // Device-local monotonic version counter for CRDT sync (persisted to localStorage)
+    private deviceVersion: number = 0;
     // Debounce timer for saving read status to prevent excessive writes
     private saveDebounceTimer: NodeJS.Timeout | null = null;
     // Throttle timer for scroll events to reduce performance overhead
@@ -190,6 +198,10 @@ export default class RSSReaderPlugin extends Plugin {
     // Track the opened RSS Reader tab for cleanup
     private rssTab: any = null;
     private rssTabOpen: boolean = false;
+    // Article content cache: store full HTML content separately from metadata
+    private articleContentCache: Map<string, string> = new Map();
+    private static readonly MAX_CONTENT_CACHE = 100;
+    private contentAccessOrder: string[] = [];
 
     // ==================== Icon Registration ====================
 
@@ -389,9 +401,17 @@ export default class RSSReaderPlugin extends Plugin {
                 sub.updatedAt = sub.lastFetchTime || Date.now();
                 migrated = true;
             }
+            // CRDT field migration: legacy subscriptions get version=0, deviceId='legacy'
+            if (sub.version === undefined || sub.deviceId === undefined) {
+                sub.version = 0;
+                sub.deviceId = 'legacy';
+                sub.originDeviceId = sub.originDeviceId || 'legacy';
+                sub.originCreatedAt = sub.originCreatedAt || sub.createdAt || 0;
+                migrated = true;
+            }
         });
         if (migrated) {
-            logger.log("Migration: added createdAt/updatedAt to subscriptions");
+            logger.log("Migration: added CRDT fields to subscriptions");
             await this.saveData(STORAGE_NAME, this.subscriptions);
         }
 
@@ -407,10 +427,9 @@ export default class RSSReaderPlugin extends Plugin {
 
         await this.migrateCacheFormat();
         await this.cleanupCache();
-        await this.cleanupReadStatus();
 
         // Pre-populate unread counts from cached data so badges are ready when tab opens
-        const cachedArticles: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+        const cachedArticles = this.getLocalCache();
         for (const subId of Object.keys(cachedArticles)) {
             const entry = cachedArticles[subId];
             if (entry?.articles) {
@@ -669,7 +688,46 @@ export default class RSSReaderPlugin extends Plugin {
         }
         
         // Close all RSS Reader tabs when plugin is unloaded
+        this.clearContentCache();
         this.closeAllRssTabs();
+    }
+
+    /**
+     * SiYuan calls onDataChanged when sync modifies plugin data files.
+     * This replaces the old behavior (onunload→onload) which caused data loss
+     * when onunload wrote stale data back to disk.
+     *
+     * We re-read subscriptions from storage to pick up cross-device changes.
+     */
+    onDataChanged() {
+        this.loadData(STORAGE_NAME).then(data => {
+            if (data) {
+                const incoming = data as Subscription[];
+                const merged = new Map<string, Subscription>();
+
+                // Existing subscriptions take priority (they may have in-memory changes)
+                this.subscriptions.forEach(s => {
+                    if (s.id) merged.set(s.id, s);
+                });
+
+                // Incoming ones fill gaps and may win via CRDT merge
+                incoming.forEach(s => {
+                    if (!s.id) return;
+                    const existing = merged.get(s.id);
+                    if (!existing) {
+                        merged.set(s.id, s);
+                    } else {
+                        const winner = this.resolveSubscriptionConflict(existing, s);
+                        merged.set(s.id, winner);
+                    }
+                });
+
+                this.subscriptions = Array.from(merged.values());
+                logger.log(`onDataChanged: merged ${incoming.length} incoming with ${this.subscriptions.length} existing`);
+            }
+        }).catch(err => {
+            logger.error("onDataChanged: failed to load data:", err);
+        });
     }
 
     /**
@@ -711,10 +769,10 @@ export default class RSSReaderPlugin extends Plugin {
         logger.log("Uninstalling RSS Reader plugin, cleaning up data...");
         
         // Remove all plugin data (subscriptions, read status, cached articles, settings)
-        await this.removeData(STORAGE_NAME);      // rss_subscriptions
-        await this.removeData(READ_STATUS_NAME);  // rss_read_status
-        await this.removeData(CACHED_ARTICLES_NAME); // rss_cached_articles
-        await this.removeData(SETTINGS_NAME);     // rss_settings
+        await this.removeData(STORAGE_NAME);
+        await this.removeData(READ_STATUS_NAME);
+        this.removeLocalCache();
+        await this.removeData(SETTINGS_NAME);
         
         logger.log("RSS Reader plugin data cleaned up successfully");
     }
@@ -736,6 +794,16 @@ export default class RSSReaderPlugin extends Plugin {
         } else {
             this.settings = { ...defaultSettings };
         }
+
+        // Ensure deviceId is set
+        if (!this.settings.deviceId) {
+            this.settings.deviceId = 'rss_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            await this.saveSettings();
+        }
+
+        // Initialize device-local version counter (NOT synced via saveData)
+        const savedVersion = parseInt(localStorage.getItem('rss_device_version') || '0', 10);
+        this.deviceVersion = Number.isFinite(savedVersion) ? savedVersion : 0;
     }
 
     // Fix #3: Detect SiYuan language and set locale
@@ -1260,16 +1328,18 @@ export default class RSSReaderPlugin extends Plugin {
     // ==================== Subscription Management ====================
 
     private async selectSubscription(index: number, container: HTMLElement, forceReload: boolean = false) {
-        // Prevent reloading if already selected (unless forceReload is true)
         if (this.currentSubscriptionIndex === index && !forceReload) {
             logger.log("Subscription already selected, skipping reload");
             return;
         }
-        
+
+        // Clear article content cache when switching subscriptions
+        this.clearContentCache();
+
         this.currentSubscriptionIndex = index;
         this.displayedArticleCount = 0;
         this.currentArticles = [];
-        this.currentArticleIndex = -1; // Clear selected article index
+        this.currentArticleIndex = -1;
         this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
 
         // Clear article content window when switching subscriptions
@@ -1294,25 +1364,18 @@ export default class RSSReaderPlugin extends Plugin {
         </div>`;
 
         try {
-            // Fix #1: Use cache-first strategy to reduce latency
             const cached = await this.getCachedArticles(sub.id);
-            
-            // If we have recent cache (< 5 minutes), show it immediately
-            const now = Date.now();
-            const hasRecentCache = cached.length > 0 && cached[0].cachedAt && (now - cached[0].cachedAt < 5 * 60 * 1000);
-            
-            if (hasRecentCache) {
-                // Track cache hit
+
+            if (cached.length > 0) {
+                // Show cached articles immediately (regardless of cachedAt age)
                 this.perfMetrics.cacheHitCount++;
-                
-                // Show cached articles immediately for better UX
-                this.currentArticles = cached;
+
+                this.currentArticles = this.stripContent(cached);
                 this.displayedArticleCount = 0;
                 if (countEl) {
                     const unread = cached.filter(a => !a.isRead).length;
                     countEl.textContent = unread > 0 ? `${unread}/${cached.length}` : `${cached.length}`;
                 }
-                // Update unread badge
                 const cachedUnread = cached.filter((a: Article) => !a.isRead).length;
                 this.unreadCounts.set(sub.id, cachedUnread);
                 const listEl = container.querySelector("#rssList");
@@ -1321,38 +1384,29 @@ export default class RSSReaderPlugin extends Plugin {
                 }
                 this.renderArticleList(container);
                 this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
-                
-                // Smart background refresh: only fetch if cache is old or user explicitly requests
+
+                // Background refresh if last fetch on this device is > 5 min old
                 const lastFetch = this.lastBackgroundFetchTime.get(sub.id) || 0;
                 const cacheAge = Date.now() - lastFetch;
-                
-                // Only auto-refresh if cache is older than 5 minutes AND no pending request
+
                 if (cacheAge > this.CACHE_EXPIRY_MS && !this.pendingRequests.has(sub.id)) {
                     this.fetchAndCacheArticles(sub).then(articles => {
                         this.lastBackgroundFetchTime.set(sub.id, Date.now());
-                        // Always update unread badge regardless of current selection
                         const unread = articles.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
                         this.unreadCounts.set(sub.id, unread);
                         const listEl = container.querySelector("#rssList");
                         if (listEl) {
                             listEl.innerHTML = this.renderSubscriptionListHTML();
                         }
-                        // Only update article list if user hasn't switched to another subscription
                         if (this.currentSubscriptionIndex === index) {
-                            this.currentArticles = articles;
-                            this.displayedArticleCount = 0;
-                            if (countEl) {
-                                countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
-                            }
-                            this.renderArticleList(container);
-                            this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
+                            this.updateUIAfterRefresh(index, container, articles);
                         }
                     }).catch(err => {
                         logger.warn("Background fetch failed:", err);
                     });
                 }
             } else {
-                // No cache, fetch fresh data
+                // No cache at all, fetch fresh data synchronously
                 const articles = await this.fetchAndCacheArticles(sub);
                 this.currentArticles = articles;
                 this.displayedArticleCount = 0;
@@ -1360,7 +1414,6 @@ export default class RSSReaderPlugin extends Plugin {
                     const unread = articles.filter(a => !a.isRead).length;
                     countEl.textContent = unread > 0 ? `${unread}/${articles.length}` : `${articles.length}`;
                 }
-                // Update unread badge
                 const freshUnread = articles.filter((a: Article) => !a.isRead).length;
                 this.unreadCounts.set(sub.id, freshUnread);
                 const listEl = container.querySelector("#rssList");
@@ -1368,7 +1421,6 @@ export default class RSSReaderPlugin extends Plugin {
                     listEl.innerHTML = this.renderSubscriptionListHTML();
                 }
                 this.renderArticleList(container);
-                // Fix #5: Auto-load more if list doesn't fill the container
                 this.safeSetTimeout(() => this.checkAndLoadMore(container), 100);
             }
         } catch (error) {
@@ -1379,58 +1431,139 @@ export default class RSSReaderPlugin extends Plugin {
         }
     }
 
+    // ==================== CRDT Sync Helpers ====================
+
     /**
-     * Timestamp-based merge for multi-device sync
-     * Strategy: 
-     * - DELETED always wins (if any device deleted, stay deleted)
-     * - Otherwise keep the version with latest updatedAt
-     * - Local changes (add/update) always preserved
-     * Leverages SiYuan's built-in sync mechanism
+     * Get and increment the device-local monotonic version counter.
+     * Persisted to localStorage (never synced) to survive plugin reloads.
+     */
+    private getNextVersion(): number {
+        this.deviceVersion++;
+        try {
+            localStorage.setItem('rss_device_version', String(this.deviceVersion));
+        } catch (e) {
+            logger.warn("Failed to persist device version to localStorage:", e);
+        }
+        return this.deviceVersion;
+    }
+
+    /**
+     * Stamp a subscription with current CRDT metadata.
+     * Must be called before every saveSubscriptionsWithMerge().
+     */
+    private stampSubscription(sub: Subscription): void {
+        sub.updatedAt = Date.now();
+        sub.version = this.getNextVersion();
+        sub.deviceId = this.settings.deviceId;
+        if (!sub.originDeviceId) {
+            sub.originDeviceId = sub.deviceId;
+            sub.originCreatedAt = sub.updatedAt;
+        }
+    }
+
+    /**
+     * CRDT merge: deterministic conflict resolution between two subscription versions.
+     * Rules:
+     *   1. DELETED always wins
+     *   2. Same deviceId → higher version wins
+     *   3. Different deviceId → version-based tiebreaker with fallback to updatedAt
+     */
+    private resolveSubscriptionConflict(a: Subscription, b: Subscription): Subscription {
+        if (a.deleted) return a;
+        if (b.deleted) return b;
+
+        const verA = a.version || 0;
+        const verB = b.version || 0;
+
+        if (a.deviceId === b.deviceId) {
+            return verA > verB ? a : b;
+        }
+
+        const timeA = a.updatedAt || 0;
+        const timeB = b.updatedAt || 0;
+
+        // Large version gap: clearly newer
+        if (Math.abs(verA - verB) >= 3) {
+            return verA > verB ? a : b;
+        }
+
+        // Small version gap: use time with 5-min clock skew tolerance
+        if (Math.abs(timeA - timeB) > 300000) {
+            return timeA > timeB ? a : b;
+        }
+
+        // Stalemate: deterministic tiebreaker (deviceId lexicographic)
+        return a.deviceId > b.deviceId ? a : b;
+    }
+
+    /**
+     * CRDT-based save with merge for multi-device sync.
+     * Uses version counters + deviceId for conflict resolution,
+     * with re-read-before-write to shrink the race window.
      */
     private async saveSubscriptionsWithMerge(): Promise<void> {
         try {
+            // Phase 1: read current storage state
             const existing: Subscription[] = await this.loadData(STORAGE_NAME) || [];
             const mergedMap = new Map<string, Subscription>();
 
-            // First, add all existing subscriptions to track what's in storage
             existing.forEach((sub: Subscription) => {
                 if (sub.id) mergedMap.set(sub.id, sub);
             });
 
-            // Then process current subscriptions
+            // Phase 2: merge in-memory subscriptions using CRDT
+            const deletedIds = new Set<string>();
             this.subscriptions.forEach((sub: Subscription) => {
                 if (!sub.id) return;
-                
-                // If current subscription is deleted, remove from merged result
+
                 if (sub.deleted) {
+                    deletedIds.add(sub.id);
                     mergedMap.delete(sub.id);
                     return;
                 }
-                
-                // If not in storage yet, always add
+
                 const existingSub = mergedMap.get(sub.id);
                 if (!existingSub) {
                     mergedMap.set(sub.id, sub);
                     return;
                 }
-                
-                // If in storage and is deleted there, replace with new non-deleted one
-                // This allows re-adding a subscription that was previously deleted
+
                 if (existingSub.deleted) {
+                    // Previous deletion superseded by re-add
                     mergedMap.set(sub.id, sub);
                     return;
                 }
-                
-                // Both exist and neither is deleted - keep the newer version
-                if (sub.updatedAt > (existingSub.updatedAt || 0)) {
-                    mergedMap.set(sub.id, sub);
-                }
+
+                // CRDT merge
+                const winner = this.resolveSubscriptionConflict(sub, existingSub);
+                mergedMap.set(sub.id, winner);
             });
+
+            // Phase 3: re-read storage and merge again (shrink race window)
+            const latest = await this.loadData(STORAGE_NAME) || [];
+            for (const sub of latest) {
+                if (deletedIds.has(sub.id)) continue;
+                if (!mergedMap.has(sub.id)) {
+                    mergedMap.set(sub.id, sub);
+                } else {
+                    const current = mergedMap.get(sub.id)!;
+                    if (current.deleted && !sub.deleted) {
+                        // Keep deletion
+                        continue;
+                    }
+                    if (!current.deleted && sub.deleted) {
+                        mergedMap.set(sub.id, sub);
+                    } else {
+                        const winner = this.resolveSubscriptionConflict(current, sub);
+                        mergedMap.set(sub.id, winner);
+                    }
+                }
+            }
 
             const merged = Array.from(mergedMap.values());
             await this.saveData(STORAGE_NAME, merged);
             this.subscriptions = merged;
-            logger.log(`Subscriptions merged: ${existing.length} existing + ${this.subscriptions.length} local = ${merged.length} total`);
+            logger.log(`CRDT merge: ${existing.length} stored + ${this.subscriptions.length} local = ${merged.length} total`);
         } catch (error) {
             logger.error("Failed to save subscriptions:", error);
         }
@@ -1480,14 +1613,13 @@ export default class RSSReaderPlugin extends Plugin {
 
         // Mark subscription as deleted (soft delete for sync)
         sub.deleted = true;
-        sub.updatedAt = Date.now();
+        this.stampSubscription(sub);
 
-        // Clean up cached articles for this subscription
         if (sub.id) {
             try {
-                const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+                const cached = this.getLocalCache();
                 delete cached[sub.id];
-                await this.saveData(CACHED_ARTICLES_NAME, cached);
+                this.setLocalCache(cached);
             } catch (error) {
                 logger.error("Failed to delete cached articles:", error);
             }
@@ -1617,14 +1749,20 @@ export default class RSSReaderPlugin extends Plugin {
                 return;
             }
 
-            this.subscriptions.push({
+            const newSub: Subscription = {
                 id: `sub_${Date.now()}`,
                 url,
                 name: name || url,
                 lastFetchTime: Date.now(),
                 createdAt: Date.now(),
-                updatedAt: Date.now()
-            });
+                updatedAt: Date.now(),
+                version: 0,
+                deviceId: '',
+                originDeviceId: '',
+                originCreatedAt: 0,
+            };
+            this.stampSubscription(newSub);
+            this.subscriptions.push(newSub);
 
             // Use smart merge to prevent data loss during sync
             await this.saveSubscriptionsWithMerge();
@@ -1912,7 +2050,7 @@ export default class RSSReaderPlugin extends Plugin {
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">
                 <div style="line-height:1.8;color:var(--b3-font-color);font-size:${fontSize.content};">
-                    ${this.sanitizeHTMLForDisplay(article.content || article.description)}
+                    ${this.sanitizeHTMLForDisplay(this.getArticleContent(article.id, article.subscriptionId) || article.description)}
                 </div>
             </div>`;
 
@@ -2124,9 +2262,8 @@ export default class RSSReaderPlugin extends Plugin {
     private async fetchAndCacheArticles(sub: Subscription): Promise<Article[]> {
         const feed = await this.fetchWithRetry(sub, 3);
         const cached = await this.getCachedArticles(sub.id);
-    
+
         const newArticles = feed.items.map(item => {
-            // Extract thumbnail once during loading, cache it in article object
             let thumbnailUrl = '';
             const contentToSearch = item.content || item.description || '';
             if (contentToSearch) {
@@ -2136,25 +2273,33 @@ export default class RSSReaderPlugin extends Plugin {
                 }
             }
             const articleId = this.generateArticleId(item.link);
-                
+
+            // Store full content in LRU cache
+            this.setArticleContent(articleId, item.content || item.description || '');
+
             return {
-                ...item,
+                title: item.title || 'Untitled',
+                link: item.link,
+                pubDate: item.pubDate,
+                content: item.content || '', // keep for local cache persistence
+                description: item.description || '',
+                author: item.author,
                 id: articleId,
                 subscriptionId: sub.id,
                 isRead: this.readStatus[articleId]?.isRead || false,
                 cachedAt: Date.now(),
-                thumbnail: thumbnailUrl || undefined // Only set if found
+                thumbnail: thumbnailUrl || undefined
             } as Article;
         });
-    
+
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
-            
-        // Update last fetch time for sync
+
         sub.lastFetchTime = Date.now();
-        sub.updatedAt = Date.now();
-            
-        return merged;
+        this.stampSubscription(sub);
+
+        // Return without content for in-memory article list
+        return this.stripContent(merged);
     }
 
     // Fetch with exponential backoff retry and request deduplication
@@ -2241,11 +2386,96 @@ export default class RSSReaderPlugin extends Plugin {
             });
     }
 
+    // ==================== Local Storage (non-synced cache) ====================
+
+    private static readonly LOCAL_CACHE_KEY = 'rss_cache';
+
+    private getLocalCache(): CachedArticles {
+        try {
+            const raw = localStorage.getItem(RSSReaderPlugin.LOCAL_CACHE_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    }
+
+    private setLocalCache(cache: CachedArticles): void {
+        try {
+            localStorage.setItem(RSSReaderPlugin.LOCAL_CACHE_KEY, JSON.stringify(cache));
+        } catch (e) {
+            if ((e as DOMException)?.name === 'QuotaExceededError') {
+                logger.warn('[Cache] localStorage quota exceeded, reducing cache size');
+                const reduced: CachedArticles = {};
+                for (const [subId, entry] of Object.entries(cache)) {
+                    reduced[subId] = {
+                        articles: entry.articles.slice(0, 50),
+                        cachedAt: entry.cachedAt
+                    };
+                }
+                try {
+                    localStorage.setItem(RSSReaderPlugin.LOCAL_CACHE_KEY, JSON.stringify(reduced));
+                } catch {
+                    logger.error('[Cache] Cannot save even reduced cache to localStorage');
+                }
+            }
+        }
+    }
+
+    private removeLocalCache(): void {
+        try {
+            localStorage.removeItem(RSSReaderPlugin.LOCAL_CACHE_KEY);
+        } catch {}
+    }
+
+    // ==================== Article Content Cache (LRU) ====================
+
+    private setArticleContent(id: string, content: string): void {
+        if (!content) return;
+        if (this.articleContentCache.size >= RSSReaderPlugin.MAX_CONTENT_CACHE) {
+            const oldest = this.contentAccessOrder.shift();
+            if (oldest) this.articleContentCache.delete(oldest);
+        }
+        this.articleContentCache.set(id, content);
+        this.contentAccessOrder = this.contentAccessOrder.filter(x => x !== id);
+        this.contentAccessOrder.push(id);
+    }
+
+    private touchContentAccess(id: string): void {
+        this.contentAccessOrder = this.contentAccessOrder.filter(x => x !== id);
+        this.contentAccessOrder.push(id);
+    }
+
+    private clearContentCache(): void {
+        this.articleContentCache.clear();
+        this.contentAccessOrder = [];
+    }
+
+    private getArticleContent(articleId: string, subscriptionId?: string): string {
+        const cached = this.articleContentCache.get(articleId);
+        if (cached) {
+            this.touchContentAccess(articleId);
+            return cached;
+        }
+        if (subscriptionId) {
+            const entry = this.getLocalCache()[subscriptionId];
+            const found = entry?.articles?.find(a => a.id === articleId);
+            if (found?.content) {
+                this.setArticleContent(articleId, found.content);
+                return found.content;
+            }
+        }
+        return '';
+    }
+
+    private stripContent(articles: Article[]): Article[] {
+        return articles.map(a => ({ ...a, content: '' }));
+    }
+
     private async getCachedArticles(subId: string): Promise<Article[]> {
-        const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+        const cached = this.getLocalCache();
         const entry = cached[subId];
         if (!entry) return [];
-        
+
         // Apply read status from readStatus map to ensure consistency
         return entry.articles.map(article => ({
             ...article,
@@ -2255,14 +2485,25 @@ export default class RSSReaderPlugin extends Plugin {
 
     private async cacheArticles(subId: string, articles: Article[]) {
         try {
-            // Keep only the latest MAX_CACHED_ARTICLES
             const trimmed = articles.slice(0, MAX_CACHED_ARTICLES);
-            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+            const cached = this.getLocalCache();
+
+            // Preserve content from existing cache when incoming articles have empty content
+            const existing = cached[subId]?.articles || [];
+            for (const article of trimmed) {
+                if (!article.content && article.id) {
+                    const found = existing.find(a => a.id === article.id);
+                    if (found?.content) {
+                        article.content = found.content;
+                    }
+                }
+            }
+
             cached[subId] = {
                 articles: trimmed,
                 cachedAt: Date.now()
             };
-            await this.saveData(CACHED_ARTICLES_NAME, cached);
+            this.setLocalCache(cached);
         } catch (error) {
             logger.error("Failed to cache articles:", error);
         }
@@ -2274,9 +2515,9 @@ export default class RSSReaderPlugin extends Plugin {
      */
     private async updateUnreadCounts(subId?: string): Promise<void> {
         try {
-            const cached: any = await this.loadData(CACHED_ARTICLES_NAME);
+            const cached = this.getLocalCache();
             if (!cached || typeof cached !== 'object') {
-                logger.log(`updateUnreadCounts: No cached data found (${CACHED_ARTICLES_NAME})`);
+                logger.log('updateUnreadCounts: No cached data found');
                 return;
             }
             
@@ -2314,44 +2555,47 @@ export default class RSSReaderPlugin extends Plugin {
      * Collects all pending changes and saves them together to reduce I/O operations
      */
     private async batchSaveReadStatus(): Promise<void> {
-        // Clear existing timer
         if (this.readStatusSaveTimer) {
             clearTimeout(this.readStatusSaveTimer);
         }
 
-        // Debounce: wait 1 second before saving to batch multiple changes
         this.readStatusSaveTimer = this.safeSetTimeout(async () => {
             if (this.pendingReadStatusChanges.size === 0) return;
 
             try {
-                // Apply all pending changes to readStatus
                 for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
                     this.readStatus[articleId] = status;
                 }
 
-                // Merge with storage to preserve entries from other devices
+                // Merge with latest storage snapshot to minimize overwrite window
                 const stored: ReadStatus = await this.loadData(READ_STATUS_NAME) || {};
                 for (const [articleId, status] of Object.entries(stored)) {
                     const existing = this.readStatus[articleId];
                     if (!existing) {
-                        // New entry from sync — keep it
                         this.readStatus[articleId] = status;
                     } else if (status.readAt && existing.readAt && status.readAt > existing.readAt) {
-                        // Sync'd entry is newer — update
                         this.readStatus[articleId] = status;
                     }
                 }
 
-                // Save merged result
+                // Re-read right before write to catch any sync-delivered changes
+                const latestStored: ReadStatus = await this.loadData(READ_STATUS_NAME) || {};
+                for (const [articleId, status] of Object.entries(latestStored)) {
+                    const merged = this.readStatus[articleId];
+                    if (!merged) {
+                        this.readStatus[articleId] = status;
+                    } else if (status.readAt && merged.readAt && status.readAt > merged.readAt) {
+                        this.readStatus[articleId] = status;
+                    }
+                }
+
                 await this.saveData(READ_STATUS_NAME, this.readStatus);
 
                 const savedCount = this.pendingReadStatusChanges.size;
-                // Clear pending changes
                 this.pendingReadStatusChanges.clear();
 
                 logger.log(`[Batch Save] Saved ${savedCount} read status changes`);
 
-                // Update unread badges on subscription list
                 if (this.container?.isConnected) {
                     const rssList = this.container.querySelector("#rssList");
                     if (rssList) {
@@ -2363,7 +2607,7 @@ export default class RSSReaderPlugin extends Plugin {
             } catch (error) {
                 logger.error("Failed to batch save read status:", error);
             }
-        }, 1000); // 1 second debounce
+        }, 1000);
     }
 
     /**
@@ -2415,7 +2659,7 @@ export default class RSSReaderPlugin extends Plugin {
      */
     private async migrateCacheFormat(): Promise<void> {
         try {
-            const cached: any = await this.loadData(CACHED_ARTICLES_NAME);
+            const cached: any = this.getLocalCache();
             if (!cached || typeof cached !== 'object') return;
             
             let needsSave = false;
@@ -2431,7 +2675,7 @@ export default class RSSReaderPlugin extends Plugin {
             }
             
             if (needsSave) {
-                await this.saveData(CACHED_ARTICLES_NAME, cached);
+                this.setLocalCache(cached);
                 logger.log("[Cache Migration] Successfully migrated cache format");
             } else {
                 logger.log("[Cache Migration] Cache format is already up-to-date");
@@ -2448,7 +2692,7 @@ export default class RSSReaderPlugin extends Plugin {
      */
     private async cleanupCache(): Promise<void> {
         try {
-            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
+            const cached = this.getLocalCache();
             const subscriptionIds = new Set(this.subscriptions.map(s => s.id));
             const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
             const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
@@ -2495,9 +2739,8 @@ export default class RSSReaderPlugin extends Plugin {
                 delete cached[key];
             }
             
-            // Save cleaned cache if anything changed
             if (cleanedCount > 0 || trimmedCount > 0) {
-                await this.saveData(CACHED_ARTICLES_NAME, cached);
+                this.setLocalCache(cached);
                 if (cleanedCount > 0) {
                     logger.log(`[Cache Cleanup] Removed ${cleanedCount} expired cache entries`);
                 }
@@ -2515,56 +2758,6 @@ export default class RSSReaderPlugin extends Plugin {
             }
         } catch (error) {
             logger.error("[Cache Cleanup] Failed to clean cache:", error);
-        }
-    }
-
-    /**
-     * Clean up old read status entries to prevent unbounded growth
-     * Keep only entries from the last 30 days
-     */
-    private async cleanupReadStatus(): Promise<void> {
-        try {
-            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000); // 30 days
-            const currentSize = Object.keys(this.readStatus).length;
-            
-            if (currentSize === 0) return;
-            
-            // Build set of all cached article IDs to identify orphaned entries
-            const cached: CachedArticles = await this.loadData(CACHED_ARTICLES_NAME) || {};
-            const cachedArticleIds = new Set<string>();
-            for (const entry of Object.values(cached)) {
-                if (entry?.articles) {
-                    entry.articles.forEach((a: Article) => cachedArticleIds.add(a.id));
-                }
-            }
-            
-            let removedCount = 0;
-            const keysToRemove: string[] = [];
-            
-            for (const [articleId, status] of Object.entries(this.readStatus)) {
-                if (status.readAt && status.readAt < thirtyDaysAgo) {
-                    keysToRemove.push(articleId);
-                    removedCount++;
-                } else if (!status.readAt && !cachedArticleIds.has(articleId)) {
-                    // Entries without readAt (from migration) whose article no longer exists
-                    keysToRemove.push(articleId);
-                    removedCount++;
-                }
-            }
-            
-            // Apply removals
-            for (const key of keysToRemove) {
-                delete this.readStatus[key];
-            }
-            
-            if (removedCount > 0) {
-                await this.saveData(READ_STATUS_NAME, this.readStatus);
-                logger.log(`[Read Status Cleanup] Removed ${removedCount} old entries (kept ${currentSize - removedCount})`);
-            } else {
-                logger.log("[Read Status Cleanup] No old entries to clean");
-            }
-        } catch (error) {
-            logger.error("Failed to cleanup read status:", error);
         }
     }
 
@@ -2698,7 +2891,7 @@ export default class RSSReaderPlugin extends Plugin {
             await this.cacheArticles(sub.id, merged);
             
             sub.lastFetchTime = Date.now();
-            sub.updatedAt = Date.now();
+            this.stampSubscription(sub);
             // Persist timestamps for sync correctness
             await this.saveSubscriptionsWithMerge();
             
@@ -2732,8 +2925,7 @@ export default class RSSReaderPlugin extends Plugin {
         const currentArticleId = this.currentArticles[this.currentArticleIndex]?.id;
         const wasReading = currentArticleId !== undefined;
         
-        // Update articles
-        this.currentArticles = merged;
+        this.currentArticles = this.stripContent(merged);
         
         // Update article count
         const countEl = container.querySelector("#articleCount") as HTMLElement;
@@ -2854,8 +3046,7 @@ export default class RSSReaderPlugin extends Plugin {
                 .substring(0, 180);
             if (!fileName) fileName = `RSS_${Date.now()}`;
 
-            // Extract images separately: use htmlToMarkdown to support img/strong/em/links etc.
-            const articleHTML = article.content || article.description || "";
+            const articleHTML = this.getArticleContent(article.id, article.subscriptionId) || article.description || "";
             logger.log("Save article:", article.title, "contentLen:", article.content?.length, "descLen:", article.description?.length, "htmlLen:", articleHTML.length);
             logger.log("Content preview (first 500):", articleHTML.substring(0, 500));
             const articleMarkdown = this.htmlToMarkdown(articleHTML);
@@ -3147,7 +3338,7 @@ ${escaped}
                 if (merged.length > cached.length) {
                     await this.cacheArticles(sub.id, merged);
                     sub.lastFetchTime = Date.now();
-                    sub.updatedAt = Date.now();
+                    this.stampSubscription(sub);
                     newArticleCount += merged.length - cached.length;
 
                     const unread = merged.filter(a =>
@@ -3225,7 +3416,7 @@ ${escaped}
                 
                 await this.cacheArticles(sub.id, merged);
                 sub.lastFetchTime = Date.now();
-                sub.updatedAt = Date.now();
+                this.stampSubscription(sub);
                 
             } catch (e) { 
                 /* silent */ 
@@ -3247,6 +3438,9 @@ ${escaped}
             const merged = await this.getCachedArticles(sub.id);
             await this.updateUIAfterRefresh(this.currentSubscriptionIndex, container, merged);
         }
+        
+        // Persist timestamp updates for sync
+        await this.saveSubscriptionsWithMerge();
         
         showMessage(hasNewArticles ? this.i18n.newArticles || this.i18n.refreshSuccess : this.i18n.refreshSuccess, 2000);
     }

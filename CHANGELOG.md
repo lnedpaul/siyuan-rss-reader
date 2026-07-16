@@ -5,6 +5,29 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.28] - 2026-07-16
+
+### 新增
+
+- **CRDT 跨设备订阅同步**: Subscription 增加 `version`/`deviceId`/`originDeviceId`/`originCreatedAt` 四个字段，实现版本号驱动的冲突解决
+  - 合并规则: deleted > 同设备 version 决胜 > 异设备 version+time 辅助 > deviceId 字典序保底
+  - Settings 增加 `deviceId`，首次启动自动生成
+  - 新增辅助方法: `getNextVersion`/`stampSubscription`/`resolveSubscriptionConflict`
+  - `deviceVersion` 计数器存 localStorage（不参与同步，避免计数器冲突）
+- **onDataChanged 生命周期**: 替代同步后的 onunload→onload，避免写回旧数据，在同步后重新加载订阅数据
+
+### 修复
+
+- **删除订阅被 Phase 3 复活**: `saveSubscriptionsWithMerge` 二次读取时跳过已删除条目（新增 `deletedIds` 跟踪）
+- **refreshAllFeeds 未保存时间戳**: 补充漏掉的 `saveSubscriptionsWithMerge` 调用
+- **readStatus 同步数据丢失风险**: 移除 `cleanupReadStatus` 启动清理（清理会通过同步传播到其他设备，导致活跃设备上的读状态丢失）
+
+### 改进
+
+- **重写 saveSubscriptionsWithMerge**: CRDT 合并 + 写入前二次读取，收窄竞争窗口
+- **所有订阅变更点注入版本号**: 6 处操作调用 `stampSubscription`
+- **旧数据自动迁移**: 现有订阅自动获得 `version=0`/`deviceId='legacy'`，向后兼容
+
 ## [0.1.27] - 2026-07-04
 
 ### 新增
