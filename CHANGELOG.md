@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.31] - 2026-07-18
+
+### 修复
+
+- **订阅源文章重复**: `mergeArticles` 新增 link 二次去重，当 RSS 源同篇文章 link 因跟踪参数变化（如 `?utm_source=rss`、`?from=home`）导致 `generateArticleId` 产生不同 ID 时，通过 link 兜底合并为同一篇，彻底消除缓存翻倍
+- **后台刷新后文章重复或缺失**: `updateUIAfterRefresh` 重渲染前复位 `isLoadingMore=false` 并清除 `scrollThrottleTimer`，防止陈旧的 `checkAndLoadMore` 回调在重渲染后追加重复
+
 ## [0.1.30] - 2026-07-18
 
 ### 重构

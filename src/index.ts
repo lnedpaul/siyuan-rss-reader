@@ -2387,10 +2387,32 @@ export default class RSSReaderPlugin extends Plugin {
 
     private mergeArticles(newArticles: Article[], cachedArticles: Article[]): Article[] {
         const map = new Map<string, Article>();
-        cachedArticles.forEach(a => map.set(a.id, a));
+        const linkMap = new Map<string, string>(); // link → id, for secondary dedup
+        cachedArticles.forEach(a => {
+            map.set(a.id, a);
+            if (a.link) linkMap.set(a.link, a.id);
+        });
         newArticles.forEach(a => {
             const existing = map.get(a.id);
-            if (existing) a.isRead = existing.isRead;
+            if (existing) {
+                a.isRead = existing.isRead;
+                map.set(a.id, a);
+                return;
+            }
+            // Secondary dedup by link: if link matches a cached article but id differs,
+            // treat them as the same article to prevent cache growth from URL parameter changes
+            if (a.link) {
+                const cachedId = linkMap.get(a.link);
+                if (cachedId) {
+                    const cached = map.get(cachedId);
+                    if (cached) {
+                        a.id = cachedId;
+                        a.isRead = cached.isRead;
+                        map.set(cachedId, a);
+                        return;
+                    }
+                }
+            }
             map.set(a.id, a);
         });
         return Array.from(map.values())
@@ -2950,6 +2972,13 @@ export default class RSSReaderPlugin extends Plugin {
         
         if (this.currentSubscriptionIndex !== index || !container || !container.isConnected) {
             return;
+        }
+        
+        // Reset loading state to prevent stale checkAndLoadMore from appending after re-render
+        this.isLoadingMore = false;
+        if (this.scrollThrottleTimer) {
+            clearTimeout(this.scrollThrottleTimer);
+            this.scrollThrottleTimer = null;
         }
         
         // Save current reading state
