@@ -5,6 +5,109 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.30] - 2026-07-18
+
+### 重构
+
+- **DOM 净化器独立模块**: 将 350+ 行的 `_nodeToMarkdown` 和相关正则净化方法重构为 `src/sanitize.ts`（DOMParser 白名单），替代 7 处不安全正则 HTML 清理，消除 XSS 盲区
+- **工具函数抽取**: `formatDate`、`formatUnreadCount`、`generateArticleId` 提取至 `src/utils.ts`，消除与主文件的状态耦合
+- **ESLint 扁平化配置**: 升级至 ESLint 10.7 + `eslint.config.mjs`，集成 `typescript-eslint` + `eslint-plugin-security`，零错误运行
+
+### 修复
+
+- **批量保存数据竞争**: `batchSaveReadStatus` 改为立即持久化，仅 UI 渲染防抖，消除关闭窗口时的已读状态丢失窗口
+- **fetchGeneration 竞态条件**: 从单计数器改为按订阅 `Map` 跟踪，`closeAllRssTabs` 使用迭代快照 `[...openedTabs[key]]` 防止并发修改
+- **onDataChanged 时序竞争**: 状态快照在入队时捕获而非执行时，保证异步队列中的读取一致性
+- **abort timer 悬挂**: `safeSetTimeout` + `safeTimeoutPromise` + `clearAllTimeouts` 统一管理所有待处理超时
+- **enqueueSave 错误传播**: 重新抛出错误的同时保证队列独立恢复，不阻塞后续保存
+- **fetchWithRetry 去重锁泄漏**: 替换布尔锁为引用计数 `pendingRequestRefs`，`finally` 仅在计数归零时清理
+- **deleteSubscription 已读状态残留**: 删除订阅时同步清理 `this.readStatus` 中对应文章的缓存条目
+- **未读计数负数**: 标记已读时使用 `Math.max(0, current - 1)` 防止角标显示负数
+- **角标 DOM 泄漏**: 使用 `display:none`/`display:''` 替代 `remove()`，保持基线 DOM 结构
+- **autoRefreshInterval=0 仍刷新**: 修复 `setupAutoRefresh` 条件判断，0 值真正禁用自动刷新
+- **XSS 安全加固**: 新增 `sanitizeUrl`/`isValidUrl` 替代 `escapeHtml` 处理 `thumbnail <img>`、`<a href>`、`window.open` 三处 URL 注入点
+- **RSS 内容净化升级**: 移除 `extractHTML` 正则 + `innerHTML` 函数，RSS description/content:encoded 改用 `sanitizeHTML` DOMParser 白名单
+- **setInterval 错误吞没**: `cleanupCache`/`refreshAllFeeds` 回调包裹 try-catch
+- **原型污染**: 全部 12 处 `parseInt` 补齐 `, 10` 基数参数
+
+### 清理
+
+- **死定时器**: 移除从未赋值的 `saveDebounceTimer` 和 `readStatusSaveTimer` 字段及全部守卫代码
+- **死字段**: 从 `RSSItem` 接口移除 `author` 字段（数据已提取但从未使用）
+- **sanitize.ts 微清理**: emoji 正则补充 `apple-emoji` 保持一致性；移除未使用的 `_i18n` 参数；`innerText` 更名为 `childrenToMarkdown`
+
+## [0.1.29] - 2026-07-17
+
+### 修复
+
+- **LRU 缓存错误驱逐**: `setArticleContent` 在 key 已存在时不再无意义驱逐有效缓存条目
+- **死代码残留**: 删除未被调用的 `startScheduledUpdates` 方法
+- **selectArticle 空值保护**: `#rssArticleContent` 查询后增加 null guard，与 `selectSubscription` 行为一致
+- **设置保存双重调用**: 合并两次 `saveSettings()` 为一次，减少冗余 I/O
+- **添加订阅 async 竞态**: 确认按钮在异步等待后检查 dialog 是否仍连接再销毁
+- **SCSS 缩进修复**: `.rss-bottom-btn` 的 closing brace 缩进对齐
+- **selectSubscription 竞态条件**: 快速切换订阅时，新增 `fetchGeneration` 计数器，过期回调不更新 UI
+- **删除未使用的 dompurify 依赖**: 减少 ~27KB 打包体积
+- **静默 catch 增加日志**: 4 处空 `.catch()` 补充 `logger.error`，不再吞错误
+- **不安全 `!` 断言加固**: 5 处替换为可选链或空值合并兜底
+- **批量标记角标不更新**: `markAllRead`/`markSubscriptionRead` 补传 `subscriptionId`，触发 `updateBadgeDOM`
+- **插件对话框监听清理**: 5 处 `addEventListener` 改为属性赋值或 `{ once: true }`
+- **XSS 安全加固**: 订阅源名称、文章列表标题和文章详情标题三处使用 `escapeHtml` 转义用户输入
+- **空链接 ID 碰撞**: `generateArticleId` 在 link 为空时回退到 `title|pubDate` 签名，消除无链接文章的 ID 碰撞
+- **i18n 缺失键**: 补充 `error`、`refreshFailed`、`operationFailed` 到中英文语言文件
+- **fetchWithRetry TOCTOU**: `pendingRequests` 去重使用 `has()` 检查后原子创建-设置，消除检查-设置竞态
+- **onDataChanged 写入竞态**: 增加 `enqueueSave` 串行化 Promise 队列，`onDataChanged` 和 `saveSubscriptionsWithMerge` 统一排队
+- **帮助对话框标志未锁定**: `isHelpDialogOpen` 始终为 `false`，`showHelpDialog` 的重入保护永久失效（回归自 #14 修复丢失）
+- **未来日期显示异常**: 时间差为负值时跳过"刚刚"检测，直接返回日期格式字符串
+- **正则注入文件名校验**: `fileName` 在传入 `RegExp` 前转义所有正则特殊字符，防止用户输入破坏正则结构
+- **checkAndLoadMore 单次停止**: 缺少递归调用，自动加载更多只在首屏触发一次；增加 `autoLoadRetryCount <= 3` 保护的递归调用
+- **tags 函数签名死代码**: 从 `applyTemplate` 和 `showNotebookSelectionDialog` 函数签名及所有调用处移除未使用的 `tags` 参数
+- **onunload localStorage 回归**: 改用 `await this.saveData()` 替代 `localStorage.setItem()`，与思源文件存储后端一致，避免已读状态在下次加载时永久丢失
+- **跨设备订阅 ID 碰撞**: 新建订阅 ID 由 `sub_${Date.now()}` 改为 `sub_${deviceId}_${timestamp}_${random}`，消除跨设备同毫秒碰撞
+- **onDataChanged 不写回本地胜出版本**: CRDT 冲突合并后若本地版本胜出，内存与磁盘不一致，重启后本地修改丢失；增加 JSON 比较 → 条件写回
+- **onDataChanged 未合并已读状态**: 同步后 `rss_read_status` 被远端覆盖，本地已读状态在下次写回时丢失；增加 `{...remote, ...local}` 合并
+
+### 改进
+
+- **SCSS 代码清理**: 删除 7 处死代码块（`.rss-article-body`、`.rss-article-excerpt`、`.rss-article-meta`、`.rss-category-filter-btn`、`.rss-add-btn-simple`、`#loadMoreBtn`、`#articleList`/`#articleContent`）
+- **SCSS ID 名修正**: `#articleList` → `#rssArticleList`，`#articleContent` → `#rssArticleContent`，滚动条样式重新生效
+- **补充 plugin.json icon 字段**: 添加 `"icon": "icon.png"`
+- **CRDT 冲突解决提取独立模块**: `resolveSubscriptionConflict` 从类私有方法提取为 `src/crdt.ts` 纯函数，并添加 15 项单元测试覆盖所有合并规则
+- **Vitest 测试框架**: 注入 `vitest` + `vitest.config.ts`，`src/crdt.test.ts` 覆盖 CRDT 合并和 `onDataChanged` 写回条件
+- **应用层修复批次（28 项审计修复）**: 以下为 2026-07-17 全量审计发现的问题修复，均位于 v0.1.29
+
+### 修复（续）
+
+- **localStorage 崩溃**: `loadSettings` 中 `getItem` 缺少 try-catch，隐私模式直接崩溃；包裹 try-catch 兜底默认值
+- **插件启动半加载**: `onload` 中异步操作整体包裹 try-catch，任一失败不再阻塞整个插件
+- **订阅索引越界崩溃**: `selectSubscription`/`deleteSubscription`/`updateUIAfterRefresh` 三处入口增加 `index` 边界守卫
+- **缩略图 XSS**: `thumbnailUrl` 来自 RSS 未转义注入 `<img src>`，使用 `escapeHtml` 转义
+- **原文链接 XSS**: `article.link` 未转义注入 `<a href>` 和 Markdown 链接，三处插值点使用 `escapeHtml` 转义
+- **sanitizeHTML 不完整**: 补充 `<object>/<embed>/<base>/<meta>/<form>` 标签黑名单、反引号事件属性匹配、`href="javascript:"` 协议过滤
+- **保存订阅吞错误**: `saveSubscriptionsWithMerge` 内部 try-catch 吞掉所有错误；移除内部 catch，`enqueueSave` 改为 rethrow 让调用方感知失败
+- **fetchAndCacheArticles 孤立版本戳**: stampSubscription 后无持久化，版本号泄漏到 localStorage 不写入订阅；删除 stampSubscription 调用（fetch 不改变订阅元数据）
+- **后台检查不更新时间戳**: `checkForUpdates` 无新文章时 `lastFetchTime` 和 stampSubscription 不执行；移出 `if (merged.length > cached.length)` 块
+- **外部删除被复活**: Phase 3 只迭代 `latest`，`existing` 中有而 `latest` 中无的条目残留 `mergedMap`；新增 Phase 4 过滤器清除已不存在条目
+- **键盘 r 刷新无效**: `refreshCurrentFeed` 调用 `selectSubscription` 缺 `forceReload=true`；补传 `true`
+- **createDocWithMd 错误状态码**: 检查 `res.code === 201/202` 永远不命中，文件已存在时不重试；改为 `res.code !== 0` 触发唯一后缀重试
+- **已读状态永久堆积**: `readStatus` 条目只增不减，删除/过期文章的已读状态永不清理；`cleanupCache` 追加遍历清除无对应缓存文章的已读条目
+- **markAllRead 只标记当前加载页**: 仅标记 `this.currentArticles` 而非缓存中全部文章；改为读取完整缓存后批量标记
+- **Notebook 选择器 Promise 悬挂**: dialog 外部销毁（点击遮罩/Esc）不 resolve，`saveArticleToSiYuan` 永久挂起；增加 `destroyCallback: () => resolve(null)`
+- **dialog.element 空值访问**: 添加订阅和删除订阅对话框在 `new Dialog()` 后立即访问 `.element` 无 null guard；增加 `if (!dialog.element) return`
+- **设置保存绕过错误处理**: 设置对话框直接调 `saveData(SETTINGS_NAME)` 而非 `saveSettings()`；改为调用 `await this.saveSettings()`
+- **autoMarkRead=false 无逐篇标记按钮**: 文章详情区增加"标记已读"按钮，仅在 `!autoMarkRead && !article.isRead` 时显示
+- **循环中 subscriptions 数组被替换**: `checkForUpdates`/`refreshAllFeeds` 循环前创建 `[...this.subscriptions]` 快照，防止 `onDataChanged` 并发替换
+- **模板模式缺少标题**: `useTemplate=true` 时输出不含 `# heading`，文档标题与内容不一致；模板内容前追加 `# ${fileName}`
+- **已删除订阅仍在列表渲染**: `renderSubscriptionListHTML` `.map` 内跳过 `sub.deleted` 条目
+- **checkAndLoadMore 3 次放弃**: 首屏填不满列表时 3 次重试后永久放弃；移除 `autoLoadRetryCount >= 3` 跳过逻辑
+- **硬编码中/英 fallback**: `openOrSwitchToRssTab` 错误消息使用中文 fallback；统一为英文回退文本
+- **笔记本选择器未预选**: 始终选第一个笔记本而非用户上次使用的；改为 `${nb.id === this.settings.lastUsedNotebookId ? 'selected' : ''}`
+- **uninstall 未清设备版本号**: 重装后 `deviceVersion` 计数器从旧值恢复；追加 `localStorage.removeItem('rss_device_version')`
+- **onunload 不等待保存队列**: pending 保存在插件上下文销毁后执行；开头 `await this.saveQueue` 并容错
+- **readAt 合并短路脆弱**: `readAt && existing.readAt` 在 `readAt=0` 时短路；改为 `(status.readAt ?? 0) > (existing.readAt ?? 0)`
+- **新增订阅 URL 验证硬编码错误**: 添加订阅对话框 URL 不合法时弹出硬编码英文；替换为 `this.i18n.invalidUrl`，补充中英文 i18n 键
+- **无限滚动后计数不更新**: `renderArticleList` `append=true` 时不刷新 `articleCount` 文本；渲染完成后统一更新计数
+
 ## [0.1.28] - 2026-07-16
 
 ### 新增

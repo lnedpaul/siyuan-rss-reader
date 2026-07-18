@@ -6,6 +6,9 @@ import {
     openTab,
 } from "siyuan";
 
+import { resolveSubscriptionConflict } from "./crdt";
+import * as sanitize from "./sanitize";
+import * as utils from "./utils";
 import "./index.scss";
 import featuredFeedsData from './featured-feeds.json';
 
@@ -24,11 +27,13 @@ const FEATURED_FEEDS = (featuredFeedsData as FeaturedFeedsConfig).feeds.flatMap(
 
 // Debug mode control - set to false in production
 const DEBUG = false;
+/* eslint-disable @typescript-eslint/no-explicit-any */
 const logger = {
     log: (...args: any[]) => DEBUG && console.log("[RSS]", ...args),
     warn: (...args: any[]) => DEBUG && console.warn("[RSS]", ...args),
-    error: (...args: any[]) => console.error("[RSS]", ...args) // Always show errors
+    error: (...args: any[]) => console.error("[RSS]", ...args),
 };
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const TAB_TYPE = "rss_reader_tab";
 const STORAGE_NAME = "rss_subscriptions";
@@ -59,7 +64,6 @@ interface RSSItem {
     pubDate: string;
     content: string;
     description: string;
-    author?: string;
 }
 
 interface Article extends RSSItem {
@@ -151,7 +155,6 @@ export default class RSSReaderPlugin extends Plugin {
     private boundHandleKeyboard!: (e: KeyboardEvent) => void;
     private listScrollHandler!: () => void;
     private isLoadingMore: boolean = false;
-    private autoLoadRetryCount: number = 0; // Track auto-load retry count to prevent infinite loop
     // Resizer cleanup refs
     private resizerMoveHandler: ((e: MouseEvent) => void) | null = null;
     private resizerUpHandler: (() => void) | null = null;
@@ -161,15 +164,14 @@ export default class RSSReaderPlugin extends Plugin {
     private initialWidth: number = 0;
     // Track all pending timeouts for cleanup
     private pendingTimeouts: NodeJS.Timeout[] = [];
+    // Serialization queue for storage operations to prevent concurrent save races
+    private saveQueue: Promise<void> = Promise.resolve();
     // Device-local monotonic version counter for CRDT sync (persisted to localStorage)
     private deviceVersion: number = 0;
-    // Debounce timer for saving read status to prevent excessive writes
-    private saveDebounceTimer: NodeJS.Timeout | null = null;
     // Throttle timer for scroll events to reduce performance overhead
     private scrollThrottleTimer: NodeJS.Timeout | null = null;
     // Performance optimization: batch read status changes before saving
     private pendingReadStatusChanges: Map<string, { isRead: boolean; readAt: number }> = new Map();
-    private readStatusSaveTimer: NodeJS.Timeout | null = null;
     // Request lock map to prevent duplicate concurrent requests per subscription (stores raw feed data)
     private pendingRequests: Map<string, Promise<{ items: RSSItem[] }>> = new Map();
     // Cache expiration time (5 minutes) - avoid unnecessary re-fetches
@@ -198,6 +200,18 @@ export default class RSSReaderPlugin extends Plugin {
     // Track the opened RSS Reader tab for cleanup
     private rssTab: any = null;
     private rssTabOpen: boolean = false;
+    // Per-subscription generation counter to prevent stale fetch data from overwriting newer selections
+    private fetchGenerations: Map<string, number> = new Map();
+    // Global generation for batch operations (refreshAllFeeds)
+    private refreshGeneration: number = 0;
+    private nextFetchGen(subId: string): number {
+        const g = (this.fetchGenerations.get(subId) ?? 0) + 1;
+        this.fetchGenerations.set(subId, g);
+        return g;
+    }
+    private isFetchGenValid(subId: string, gen: number): boolean {
+        return (this.fetchGenerations.get(subId) ?? 0) === gen;
+    }
     // Article content cache: store full HTML content separately from metadata
     private articleContentCache: Map<string, string> = new Map();
     private static readonly MAX_CONTENT_CACHE = 100;
@@ -281,20 +295,13 @@ export default class RSSReaderPlugin extends Plugin {
                 <path d="m20.5 9.5-5 5"></path>
             </symbol>
             
-            <!-- Minimize Icon -->
-            <symbol id="iconRSSMinimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m14 10 7-7"></path>
-                <path d="M20 10h-6V4"></path>
-                <path d="m3 21 7-7"></path>
-                <path d="M4 14h6v6"></path>
-            </symbol>
         </svg>`;
         
         // Register all icons with SiYuan using addIcons()
         // This must be called before addDock() to ensure icons are available
         this.addIcons(icons);
         
-        logger.log('Custom icons registered successfully (9 icons): iconRSSMain, iconRSSAdd, iconRSSRefresh, iconRSSCheck, iconRSSHelp, iconRSSSettings, iconRSSSave, iconRSSDelete, iconRSSMinimize');
+        logger.log('Custom icons registered successfully (8 icons): iconRSSMain, iconRSSAdd, iconRSSRefresh, iconRSSCheck, iconRSSHelp, iconRSSSettings, iconRSSSave, iconRSSDelete');
     }
 
     // ==================== Lifecycle ====================
@@ -304,13 +311,13 @@ export default class RSSReaderPlugin extends Plugin {
         this.boundHandleKeyboard = this.handleKeyboard.bind(this);
         this.registerCustomIcons();
 
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
         const plugin = this;
         this.addTab({
             type: TAB_TYPE,
             beforeDestroy: function () {
             },
             destroy: function () {
-                // Clean up global event listeners when tab is closed
                 document.removeEventListener('keydown', plugin.boundHandleKeyboard);
                 if (plugin.resizerMoveHandler) {
                     document.removeEventListener('mousemove', plugin.resizerMoveHandler);
@@ -330,17 +337,13 @@ export default class RSSReaderPlugin extends Plugin {
                 }
                 plugin.isResizing = false;
                 plugin.clearAllTimeouts();
-                if (plugin.readStatusSaveTimer) {
-                    clearTimeout(plugin.readStatusSaveTimer);
-                    plugin.readStatusSaveTimer = null;
+                if (plugin.readStatusUiTimer) {
+                    clearTimeout(plugin.readStatusUiTimer);
+                    plugin.readStatusUiTimer = null;
                 }
                 if (plugin.scrollThrottleTimer) {
                     clearTimeout(plugin.scrollThrottleTimer);
                     plugin.scrollThrottleTimer = null;
-                }
-                if (plugin.saveDebounceTimer) {
-                    clearTimeout(plugin.saveDebounceTimer);
-                    plugin.saveDebounceTimer = null;
                 }
                 if (plugin.container && plugin.listScrollHandler) {
                     const articleList = plugin.container.querySelector("#rssArticleList");
@@ -360,7 +363,7 @@ export default class RSSReaderPlugin extends Plugin {
                     }
                 }
             },
-            init: function (this: any) {
+            init: function (this: { element: Element }) {
                 try {
                     const container = this.element as HTMLElement;
                     if (container) {
@@ -369,8 +372,8 @@ export default class RSSReaderPlugin extends Plugin {
                     } else {
                         logger.error("[RSS] Tab container element is null");
                     }
-                } catch (err) {
-                    logger.error("[RSS] Tab init error:", err);
+                } catch (_err) {
+                    logger.error("[RSS] Tab init error:", _err);
                 }
             }
         });
@@ -384,75 +387,81 @@ export default class RSSReaderPlugin extends Plugin {
         });
 
         // Now safe to do async operations
-        await this.loadSettings();
-        
-        this.detectLanguage();
+        try {
+            await this.loadSettings();
+            
+            this.detectLanguage();
 
-        const data = await this.loadData(STORAGE_NAME);
-        this.subscriptions = data || [];
+            const data = await this.loadData(STORAGE_NAME);
+            this.subscriptions = data || [];
 
-        let migrated = false;
-        this.subscriptions.forEach(sub => {
-            if (sub.createdAt === undefined) {
-                sub.createdAt = sub.lastFetchTime || Date.now();
-                migrated = true;
+            let migrated = false;
+            this.subscriptions.forEach(sub => {
+                if (sub.createdAt === undefined) {
+                    sub.createdAt = sub.lastFetchTime || Date.now();
+                    migrated = true;
+                }
+                if (sub.updatedAt === undefined) {
+                    sub.updatedAt = sub.lastFetchTime || Date.now();
+                    migrated = true;
+                }
+                // CRDT field migration: legacy subscriptions get version=0, deviceId='legacy'
+                if (sub.version === undefined || sub.deviceId === undefined) {
+                    sub.version = 0;
+                    sub.deviceId = 'legacy';
+                    sub.originDeviceId = sub.originDeviceId || 'legacy';
+                    sub.originCreatedAt = sub.originCreatedAt || sub.createdAt || 0;
+                    migrated = true;
+                }
+            });
+            if (migrated) {
+                logger.log("Migration: added CRDT fields to subscriptions");
+                await this.saveData(STORAGE_NAME, this.subscriptions);
             }
-            if (sub.updatedAt === undefined) {
-                sub.updatedAt = sub.lastFetchTime || Date.now();
-                migrated = true;
+
+            const before = this.subscriptions.length;
+            this.subscriptions = this.subscriptions.filter(s => !s.url.includes("36kr.com"));
+            if (this.subscriptions.length < before) {
+                logger.log("Migration: removed 36kr from subscriptions");
+                await this.saveData(STORAGE_NAME, this.subscriptions);
             }
-            // CRDT field migration: legacy subscriptions get version=0, deviceId='legacy'
-            if (sub.version === undefined || sub.deviceId === undefined) {
-                sub.version = 0;
-                sub.deviceId = 'legacy';
-                sub.originDeviceId = sub.originDeviceId || 'legacy';
-                sub.originCreatedAt = sub.originCreatedAt || sub.createdAt || 0;
-                migrated = true;
+
+            const status = await this.loadData(READ_STATUS_NAME);
+            this.readStatus = status || {};
+
+            await this.migrateCacheFormat();
+            await this.cleanupCache();
+
+            // Pre-populate unread counts from cached data so badges are ready when tab opens
+            const cachedArticles = this.getLocalCache();
+            for (const subId of Object.keys(cachedArticles)) {
+                const entry = cachedArticles[subId];
+                if (entry?.articles) {
+                    const unread = entry.articles.filter((a: Article) =>
+                        !(this.readStatus[a.id]?.isRead || a.isRead || false)
+                    ).length;
+                    this.unreadCounts.set(subId, unread);
+                }
             }
-        });
-        if (migrated) {
-            logger.log("Migration: added CRDT fields to subscriptions");
-            await this.saveData(STORAGE_NAME, this.subscriptions);
+
+            // Refresh UI if tab already opened before data was loaded
+            if (this.container?.isConnected) {
+                const rssList = this.container.querySelector("#rssList");
+                if (rssList) {
+                    rssList.innerHTML = this.renderSubscriptionListHTML();
+                }
+                this.updateUnreadCounts();
+            }
+
+            this.setupAutoRefresh();
+            this.checkForUpdates();
+            this.cleanupInterval = setInterval(() => {
+                try { this.cleanupCache(); } catch (e) { logger.error("cleanupCache error:", e); }
+            }, 24 * 60 * 60 * 1000);
+            this.registerKeyboardShortcuts();
+        } catch (error) {
+            logger.error("[RSS] Failed to load plugin data:", error);
         }
-
-        const before = this.subscriptions.length;
-        this.subscriptions = this.subscriptions.filter(s => !s.url.includes("36kr.com"));
-        if (this.subscriptions.length < before) {
-            logger.log("Migration: removed 36kr from subscriptions");
-            await this.saveData(STORAGE_NAME, this.subscriptions);
-        }
-
-        const status = await this.loadData(READ_STATUS_NAME);
-        this.readStatus = status || {};
-
-        await this.migrateCacheFormat();
-        await this.cleanupCache();
-
-        // Pre-populate unread counts from cached data so badges are ready when tab opens
-        const cachedArticles = this.getLocalCache();
-        for (const subId of Object.keys(cachedArticles)) {
-            const entry = cachedArticles[subId];
-            if (entry?.articles) {
-                const unread = entry.articles.filter((a: Article) =>
-                    !(this.readStatus[a.id]?.isRead || a.isRead || false)
-                ).length;
-                this.unreadCounts.set(subId, unread);
-            }
-        }
-
-        // Refresh UI if tab already opened before data was loaded
-        if (this.container?.isConnected) {
-            const rssList = this.container.querySelector("#rssList");
-            if (rssList) {
-                rssList.innerHTML = this.renderSubscriptionListHTML();
-            }
-            this.updateUnreadCounts();
-        }
-
-        this.setupAutoRefresh();
-        this.checkForUpdates();
-        this.cleanupInterval = setInterval(() => this.cleanupCache(), 24 * 60 * 60 * 1000);
-        this.registerKeyboardShortcuts();
     }
 
     /**
@@ -460,15 +469,12 @@ export default class RSSReaderPlugin extends Plugin {
      * SiYuan 3.3+ requires addDock() and addTopBar() to be called here
      */
     onLayoutReady() {
-        const plugin = this;
-        
-        // Add top bar icon for opening RSS Reader in a tab
         this.addTopBar({
             icon: "iconRSSMain",
             title: this.i18n.rssReader || "RSS Reader",
             position: "right",
             callback: () => {
-                plugin.openOrSwitchToRssTab();
+                this.openOrSwitchToRssTab();
             }
         });
     }
@@ -481,7 +487,7 @@ export default class RSSReaderPlugin extends Plugin {
         
         if (!this.app) {
             logger.error("[RSS] Plugin not initialized properly");
-            showMessage(this.i18n.error || "插件未初始化", 3000);
+            showMessage(this.i18n.error || "Error", 3000);
             return;
         }
         
@@ -493,7 +499,7 @@ export default class RSSReaderPlugin extends Plugin {
                     headEl.click();
                     logger.log("[RSS] Switched to existing tab");
                     return;
-                } catch (err) {
+                } catch {
                     logger.warn("[RSS] Stored tab no longer valid, opening new one");
                 }
             } else {
@@ -538,7 +544,7 @@ export default class RSSReaderPlugin extends Plugin {
             this.ensureTabContent(tab);
         } catch (err) {
             logger.error("[RSS] Failed to open tab:", err);
-            showMessage(this.i18n.error || "打开标签页失败", 3000);
+            showMessage(this.i18n.error || "Error", 3000);
         }
     }
 
@@ -546,9 +552,14 @@ export default class RSSReaderPlugin extends Plugin {
      * Ensure tab has content rendered. Called after openTab.
      * Works both as fallback if addTab init failed, and as primary renderer.
      */
+    private ensuringTabContent = false;
+
     private ensureTabContent(tab: any): void {
+        if (this.ensuringTabContent) return;
+        this.ensuringTabContent = true;
         // Wait for DOM to settle
         requestAnimationFrame(() => {
+            this.ensuringTabContent = false;
             if (this.container && this.container.isConnected) return;
 
             // 1. Try via getOpenedTab (works if addTab was registered correctly)
@@ -592,20 +603,36 @@ export default class RSSReaderPlugin extends Plugin {
     private safeSetTimeout(fn: () => void, delay: number): NodeJS.Timeout {
         const timeout = setTimeout(() => {
             fn();
-            // Remove from tracking array after execution
             this.pendingTimeouts = this.pendingTimeouts.filter(t => t !== timeout);
         }, delay);
         this.pendingTimeouts.push(timeout);
         return timeout;
     }
 
-    // Clear all pending timeouts
+    private safeTimeoutPromise(delay: number): Promise<void> {
+        return new Promise<void>(resolve => {
+            this.pendingTimeoutResolves.push(resolve);
+            this.safeSetTimeout(() => {
+                this.pendingTimeoutResolves = this.pendingTimeoutResolves.filter(r => r !== resolve);
+                resolve();
+            }, delay);
+        });
+    }
+
+    private pendingTimeoutResolves: Array<() => void> = [];
+
     private clearAllTimeouts() {
         this.pendingTimeouts.forEach(t => clearTimeout(t));
         this.pendingTimeouts = [];
+        const resolves = this.pendingTimeoutResolves;
+        this.pendingTimeoutResolves = [];
+        resolves.forEach(r => r());
     }
 
-    onunload() {
+    async onunload() {
+        // Flush pending save queue before unload
+        try { await this.saveQueue; } catch { /* ignore */ }
+
         // Clear all intervals
         if (this.updateInterval) {
             clearInterval(this.updateInterval);
@@ -619,33 +646,30 @@ export default class RSSReaderPlugin extends Plugin {
         // Clear all pending timeouts
         this.clearAllTimeouts();
         
-        // Clear debounce timer
-        if (this.saveDebounceTimer) {
-            clearTimeout(this.saveDebounceTimer);
-            this.saveDebounceTimer = null;
-        }
-        
         // Clear scroll throttle timer
         if (this.scrollThrottleTimer) {
             clearTimeout(this.scrollThrottleTimer);
             this.scrollThrottleTimer = null;
         }
         
+        // Clear read status UI update timer
+        if (this.readStatusUiTimer) {
+            clearTimeout(this.readStatusUiTimer);
+            this.readStatusUiTimer = null;
+        }
+        
         // Flush pending read status changes before unload
         if (this.pendingReadStatusChanges.size > 0) {
             logger.log(`[Unload] Flushing ${this.pendingReadStatusChanges.size} pending read status changes`);
-            if (this.readStatusSaveTimer) {
-                clearTimeout(this.readStatusSaveTimer);
-            }
-            // Synchronously apply changes to avoid data loss
             for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
                 this.readStatus[articleId] = status;
             }
             this.pendingReadStatusChanges.clear();
-            // Fire-and-forget save: persist read status before unload
-            this.saveData(READ_STATUS_NAME, this.readStatus).catch(err =>
-                logger.error("[Unload] Failed to save read status:", err)
-            );
+            try {
+                await this.saveData(READ_STATUS_NAME, this.readStatus);
+            } catch (e) {
+                logger.error("[Unload] Failed to save read status:", e);
+            }
         }
         
         // Cancel all pending network requests
@@ -694,39 +718,58 @@ export default class RSSReaderPlugin extends Plugin {
 
     /**
      * SiYuan calls onDataChanged when sync modifies plugin data files.
-     * This replaces the old behavior (onunload→onload) which caused data loss
-     * when onunload wrote stale data back to disk.
-     *
-     * We re-read subscriptions from storage to pick up cross-device changes.
+     * Snapshot subscriptions/readStatus at enqueue time to avoid race
+     * between capture and execution.
      */
     onDataChanged() {
-        this.loadData(STORAGE_NAME).then(data => {
+        const subsSnapshot = [...this.subscriptions];
+        const rsSnapshot = { ...this.readStatus };
+
+        this.enqueueSave(async () => {
+            const data = await this.loadData(STORAGE_NAME);
             if (data) {
                 const incoming = data as Subscription[];
                 const merged = new Map<string, Subscription>();
 
-                // Existing subscriptions take priority (they may have in-memory changes)
-                this.subscriptions.forEach(s => {
+                subsSnapshot.forEach(s => {
                     if (s.id) merged.set(s.id, s);
                 });
 
-                // Incoming ones fill gaps and may win via CRDT merge
                 incoming.forEach(s => {
                     if (!s.id) return;
                     const existing = merged.get(s.id);
                     if (!existing) {
                         merged.set(s.id, s);
                     } else {
-                        const winner = this.resolveSubscriptionConflict(existing, s);
+                        const winner = resolveSubscriptionConflict(existing, s);
                         merged.set(s.id, winner);
                     }
                 });
 
-                this.subscriptions = Array.from(merged.values());
+                const mergedArray = Array.from(merged.values());
+
+                const incomingJson = JSON.stringify(incoming);
+                const mergedJson = JSON.stringify(mergedArray);
+                if (incomingJson !== mergedJson) {
+                    await this.saveData(STORAGE_NAME, mergedArray);
+                    logger.log(`onDataChanged: wrote back merged result (${mergedArray.length} subs)`);
+                }
+
+                this.subscriptions = mergedArray;
                 logger.log(`onDataChanged: merged ${incoming.length} incoming with ${this.subscriptions.length} existing`);
             }
-        }).catch(err => {
-            logger.error("onDataChanged: failed to load data:", err);
+
+            const statusData = await this.loadData(READ_STATUS_NAME);
+            if (statusData) {
+                const incoming = statusData as ReadStatus;
+                const merged = { ...incoming, ...rsSnapshot };
+                const incomingJson = JSON.stringify(incoming);
+                const mergedJson = JSON.stringify(merged);
+                if (incomingJson !== mergedJson) {
+                    await this.saveData(READ_STATUS_NAME, merged);
+                }
+                this.readStatus = merged;
+            }
         });
     }
 
@@ -747,7 +790,8 @@ export default class RSSReaderPlugin extends Plugin {
         const openedTabs = this.getOpenedTab();
         for (const key in openedTabs) {
             if (key.includes(TAB_TYPE)) {
-                for (const custom of openedTabs[key]) {
+                const tabs = [...(openedTabs[key] || [])];
+                for (const custom of tabs) {
                     try {
                         if (custom.tab) {
                             custom.tab.close();
@@ -773,6 +817,7 @@ export default class RSSReaderPlugin extends Plugin {
         await this.removeData(READ_STATUS_NAME);
         this.removeLocalCache();
         await this.removeData(SETTINGS_NAME);
+        localStorage.removeItem('rss_device_version');
         
         logger.log("RSS Reader plugin data cleaned up successfully");
     }
@@ -802,14 +847,18 @@ export default class RSSReaderPlugin extends Plugin {
         }
 
         // Initialize device-local version counter (NOT synced via saveData)
-        const savedVersion = parseInt(localStorage.getItem('rss_device_version') || '0', 10);
+        let savedVersion = 0;
+        try {
+            savedVersion = parseInt(localStorage.getItem('rss_device_version') || '0', 10);
+        } catch (e) {
+            logger.warn("Failed to read device version from localStorage:", e);
+        }
         this.deviceVersion = Number.isFinite(savedVersion) ? savedVersion : 0;
     }
 
     // Fix #3: Detect SiYuan language and set locale
     private detectLanguage() {
         try {
-            // @ts-ignore
             const lang = window.siyuan?.config?.lang || "en";
             // SiYuan's i18n is handled by the plugin system based on lang
             // We don't need to manually switch - it's automatic
@@ -884,6 +933,7 @@ export default class RSSReaderPlugin extends Plugin {
             case SHORTCUTS.MARK_ALL_READ: e.preventDefault(); if (this.container) this.markAllRead(this.container); break;
             case SHORTCUTS.HELP: e.preventDefault(); this.showHelpDialog(); break;
             case SHORTCUTS.PAGE_DOWN: e.preventDefault(); this.scrollArticleContentPage(); break;
+            default: break;
         }
     }
     
@@ -947,13 +997,13 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
     private openCurrentArticleOriginal() {
-        if (this.currentArticleIndex < 0) return;
+        if (this.currentArticleIndex < 0 || this.currentArticleIndex >= this.currentArticles.length) return;
         const article = this.currentArticles[this.currentArticleIndex];
-        if (article?.link) window.open(article.link, '_blank');
+        if (article?.link && this.isValidUrl(article.link)) window.open(article.link, '_blank');
     }
 
     private saveCurrentArticle() {
-        if (this.currentArticleIndex < 0) return;
+        if (this.currentArticleIndex < 0 || this.currentArticleIndex >= this.currentArticles.length) return;
         const article = this.currentArticles[this.currentArticleIndex];
         if (article) this.saveArticleToSiYuan(article);
     }
@@ -1070,40 +1120,36 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
     private renderSubscriptionListHTML(): string {
-        let html = '';
+        const parts: string[] = [];
         
         if (this.subscriptions.length === 0) {
-            // When empty: show enhanced "+" button with slide animation, then empty state message
-            html += `<div style="padding:8px;display:flex;justify-content:center;">
+            parts.push(`<div style="padding:8px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
                     <span class="rss-add-btn-sign">
                         <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
                     </span>
                     <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
                 </button>
-            </div>`;
-            html += `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
+            </div>`,
+            `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
                 <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:28px;height:28px;"><use xlink:href="#iconRSSMain"></use></svg></div>
                 <div>${this.i18n.noSubscriptions}</div>
                 <div style="margin-top:4px;font-size:11px;">${this.i18n.addFirst}</div>
-            </div>`;
+            </div>`);
         } else {
-            // When populated: show subscription items first, then "+" button at bottom
             const fs = this.getFontSizeStyle();
-            html += this.subscriptions.map((sub, index) => `
-                <div class="rss-item ${this.currentSubscriptionIndex === index ? 'active' : ''}"
+            parts.push(this.subscriptions.map((sub, index) => {
+                if (sub.deleted) return '';
+                return `<div class="rss-item ${this.currentSubscriptionIndex === index ? 'active' : ''}"
                     data-index="${index}"
                     style="padding:8px 10px;border-radius:4px;margin-bottom:4px;cursor:pointer;display:flex;align-items:center;gap:8px;">
-                    <!-- Left border indicator (fixed width placeholder) -->
                     <div style="width:3px;flex-shrink:0;"></div>
-                    <!-- Subscription name (clickable) -->
                     <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;position:relative;">
                         <div style="font-size:${fs.listItem};font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
-                            ${sub.name || sub.url}
+                            ${this.escapeHtml(sub.name || sub.url)}
                         </div>
-                        ${(this.unreadCounts.get(sub.id) ?? 0) > 0 ? `<span class="unread-badge">${this.formatUnreadCount(this.unreadCounts.get(sub.id)!)}</span>` : ''}
+                        ${(this.unreadCounts.get(sub.id) ?? 0) > 0 ? `<span class="unread-badge">${this.formatUnreadCount(this.unreadCounts.get(sub.id) ?? 0)}</span>` : ''}
                     </div>
-                    <!-- Action buttons: Mark Read, Refresh, Delete -->
                     <div class="subscription-actions">
                         <button class="mark-read-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.markAllRead}">
                             <span class="rss-action-btn-sign">
@@ -1124,21 +1170,19 @@ export default class RSSReaderPlugin extends Plugin {
                             <span class="rss-action-btn-text">${this.i18n.delete || 'Delete'}</span>
                         </button>
                     </div>
-                </div>
-            `).join("");
-            
-            // Add button at bottom of subscription list
-            html += `<div style="padding:8px;display:flex;justify-content:center;">
+                </div>`;
+            }).join(""),
+            `<div style="padding:8px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
                     <span class="rss-add-btn-sign">
                         <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
                     </span>
                     <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
                 </button>
-            </div>`;
+            </div>`);
         }
         
-        return html;
+        return parts.join('');
     }
 
     private subscriptionEventAbort: AbortController | null = null;
@@ -1169,7 +1213,8 @@ export default class RSSReaderPlugin extends Plugin {
             const deleteBtn = target.closest(".delete-rss");
             if (deleteBtn) {
                 e.stopPropagation();
-                const index = parseInt((deleteBtn as HTMLElement).dataset.index!);
+                const index = parseInt((deleteBtn as HTMLElement).dataset.index ?? '', 10);
+                if (isNaN(index)) return;
                 this.deleteSubscription(index, container);
                 return;
             }
@@ -1177,7 +1222,8 @@ export default class RSSReaderPlugin extends Plugin {
             const refreshBtn = target.closest(".refresh-rss");
             if (refreshBtn) {
                 e.stopPropagation();
-                const index = parseInt((refreshBtn as HTMLElement).dataset.index!);
+                const index = parseInt((refreshBtn as HTMLElement).dataset.index ?? '', 10);
+                if (isNaN(index)) return;
                 this.refreshSubscription(index, container);
                 return;
             }
@@ -1185,14 +1231,16 @@ export default class RSSReaderPlugin extends Plugin {
             const markReadBtn = target.closest(".mark-read-rss");
             if (markReadBtn) {
                 e.stopPropagation();
-                const index = parseInt((markReadBtn as HTMLElement).dataset.index!);
+                const index = parseInt((markReadBtn as HTMLElement).dataset.index ?? '', 10);
+                if (isNaN(index)) return;
                 this.markSubscriptionRead(index, container);
                 return;
             }
 
             const nameArea = target.closest(".subscription-name");
             if (nameArea) {
-                const index = parseInt((nameArea as HTMLElement).dataset.index!);
+                const index = parseInt((nameArea as HTMLElement).dataset.index ?? '', 10);
+                if (isNaN(index)) return;
                 this.selectSubscription(index, container);
             }
         }, { signal });
@@ -1238,7 +1286,7 @@ export default class RSSReaderPlugin extends Plugin {
                 try {
                     const pct = ((startWidth + e.clientX - startX) / parent.offsetWidth) * 100;
                     if (pct >= 10 && pct <= 35) currentSidebar.style.width = `${pct}%`;
-                } catch (err) {
+                } catch {
                     // Silently fail if parent is null/invalid
                     resizing = false;
                 }
@@ -1302,7 +1350,7 @@ export default class RSSReaderPlugin extends Plugin {
                         const newPct = startPct + (delta / parent.offsetHeight) * 100;
                         if (newPct >= 10 && newPct <= 80) currentArticleList.style.flexBasis = `${newPct}%`;
                     }
-                } catch (err) {
+                } catch {
                     // Silently fail if parent is null/invalid
                     resizing = false;
                 }
@@ -1333,6 +1381,8 @@ export default class RSSReaderPlugin extends Plugin {
             return;
         }
 
+        let gen = 0;
+
         // Clear article content cache when switching subscriptions
         this.clearContentCache();
 
@@ -1340,21 +1390,22 @@ export default class RSSReaderPlugin extends Plugin {
         this.displayedArticleCount = 0;
         this.currentArticles = [];
         this.currentArticleIndex = -1;
-        this.autoLoadRetryCount = 0; // Reset auto-load retry counter when switching subscriptions
 
         // Clear article content window when switching subscriptions
         const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
         if (contentEl) {
-            contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle || 'Select an article to read'}</div>`;
+            contentEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--b3-font-color-quaternary);font-size:13px;">${this.i18n.selectArticle || 'Select a subscription or article'}</div>`;
         }
 
+        if (index < 0 || index >= this.subscriptions.length) return;
         const sub = this.subscriptions[index];
+        gen = this.nextFetchGen(sub.id);
         const articleListEl = container.querySelector("#rssArticleList") as HTMLElement;
         const countEl = container.querySelector("#articleCount") as HTMLElement;
 
         container.querySelectorAll(".rss-item").forEach((item) => {
-            const i = parseInt((item as HTMLElement).dataset.index!);
-            item.classList.toggle("active", i === index);
+            const i = parseInt((item as HTMLElement).dataset.index ?? "", 10);
+            if (!isNaN(i)) item.classList.toggle("active", i === index);
             // Removed inline styles - let CSS handle active state
         });
 
@@ -1365,6 +1416,8 @@ export default class RSSReaderPlugin extends Plugin {
 
         try {
             const cached = await this.getCachedArticles(sub.id);
+
+            if (!this.isFetchGenValid(sub.id, gen)) return;
 
             if (cached.length > 0) {
                 // Show cached articles immediately (regardless of cachedAt age)
@@ -1391,6 +1444,7 @@ export default class RSSReaderPlugin extends Plugin {
 
                 if (cacheAge > this.CACHE_EXPIRY_MS && !this.pendingRequests.has(sub.id)) {
                     this.fetchAndCacheArticles(sub).then(articles => {
+                        if (!this.isFetchGenValid(sub.id, gen)) return;
                         this.lastBackgroundFetchTime.set(sub.id, Date.now());
                         const unread = articles.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
                         this.unreadCounts.set(sub.id, unread);
@@ -1408,6 +1462,7 @@ export default class RSSReaderPlugin extends Plugin {
             } else {
                 // No cache at all, fetch fresh data synchronously
                 const articles = await this.fetchAndCacheArticles(sub);
+                if (!this.isFetchGenValid(sub.id, gen)) return;
                 this.currentArticles = articles;
                 this.displayedArticleCount = 0;
                 if (countEl) {
@@ -1462,47 +1517,23 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
     /**
-     * CRDT merge: deterministic conflict resolution between two subscription versions.
-     * Rules:
-     *   1. DELETED always wins
-     *   2. Same deviceId → higher version wins
-     *   3. Different deviceId → version-based tiebreaker with fallback to updatedAt
-     */
-    private resolveSubscriptionConflict(a: Subscription, b: Subscription): Subscription {
-        if (a.deleted) return a;
-        if (b.deleted) return b;
-
-        const verA = a.version || 0;
-        const verB = b.version || 0;
-
-        if (a.deviceId === b.deviceId) {
-            return verA > verB ? a : b;
-        }
-
-        const timeA = a.updatedAt || 0;
-        const timeB = b.updatedAt || 0;
-
-        // Large version gap: clearly newer
-        if (Math.abs(verA - verB) >= 3) {
-            return verA > verB ? a : b;
-        }
-
-        // Small version gap: use time with 5-min clock skew tolerance
-        if (Math.abs(timeA - timeB) > 300000) {
-            return timeA > timeB ? a : b;
-        }
-
-        // Stalemate: deterministic tiebreaker (deviceId lexicographic)
-        return a.deviceId > b.deviceId ? a : b;
-    }
-
-    /**
      * CRDT-based save with merge for multi-device sync.
      * Uses version counters + deviceId for conflict resolution,
      * with re-read-before-write to shrink the race window.
      */
+    // Serialize storage writes to prevent race conditions with onDataChanged
+    private enqueueSave(fn?: () => Promise<void>): Promise<void> {
+        if (!fn) return Promise.resolve();
+        const result = this.saveQueue.then(fn).catch(err => {
+            logger.error("Save queue error:", err);
+            throw err;
+        });
+        this.saveQueue = result.catch(() => {});
+        return result;
+    }
+
     private async saveSubscriptionsWithMerge(): Promise<void> {
-        try {
+        await this.enqueueSave(async () => {
             // Phase 1: read current storage state
             const existing: Subscription[] = await this.loadData(STORAGE_NAME) || [];
             const mergedMap = new Map<string, Subscription>();
@@ -1535,7 +1566,7 @@ export default class RSSReaderPlugin extends Plugin {
                 }
 
                 // CRDT merge
-                const winner = this.resolveSubscriptionConflict(sub, existingSub);
+                const winner = resolveSubscriptionConflict(sub, existingSub);
                 mergedMap.set(sub.id, winner);
             });
 
@@ -1546,7 +1577,8 @@ export default class RSSReaderPlugin extends Plugin {
                 if (!mergedMap.has(sub.id)) {
                     mergedMap.set(sub.id, sub);
                 } else {
-                    const current = mergedMap.get(sub.id)!;
+                    const current = mergedMap.get(sub.id);
+                    if (!current) continue;
                     if (current.deleted && !sub.deleted) {
                         // Keep deletion
                         continue;
@@ -1554,9 +1586,19 @@ export default class RSSReaderPlugin extends Plugin {
                     if (!current.deleted && sub.deleted) {
                         mergedMap.set(sub.id, sub);
                     } else {
-                        const winner = this.resolveSubscriptionConflict(current, sub);
+                        const winner = resolveSubscriptionConflict(current, sub);
                         mergedMap.set(sub.id, winner);
                     }
+                }
+            }
+
+            // Phase 4: remove entries that were externally deleted
+            // (present in existing but absent from latest AND current subscriptions)
+            for (const [id] of mergedMap) {
+                if (existing.some((s: Subscription) => s.id === id) &&
+                    !latest.some((s: Subscription) => s.id === id) &&
+                    !this.subscriptions.some((s: Subscription) => s.id === id)) {
+                    mergedMap.delete(id);
                 }
             }
 
@@ -1564,12 +1606,11 @@ export default class RSSReaderPlugin extends Plugin {
             await this.saveData(STORAGE_NAME, merged);
             this.subscriptions = merged;
             logger.log(`CRDT merge: ${existing.length} stored + ${this.subscriptions.length} local = ${merged.length} total`);
-        } catch (error) {
-            logger.error("Failed to save subscriptions:", error);
-        }
+        });
     }
 
     private async deleteSubscription(index: number, container: HTMLElement) {
+        if (index < 0 || index >= this.subscriptions.length) return;
         const sub = this.subscriptions[index];
 
         const confirmed = await new Promise<boolean>((resolve) => {
@@ -1584,10 +1625,12 @@ export default class RSSReaderPlugin extends Plugin {
                     <button type="button" class="b3-button b3-button--text" id="delConfirm" style="color:var(--b3-theme-error);">${this.i18n.delete}</button>
                 </div>`,
                 width: "350px",
+                destroyCallback: () => resolve(false),
             });
             //Fix z-index to be above sticky header
             requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
             
+            if (!dialog.element) { resolve(false); return; }
             const cancelBtn = dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement;
             const confirmBtn = dialog.element.querySelector("#delConfirm") as HTMLButtonElement;
             
@@ -1618,12 +1661,23 @@ export default class RSSReaderPlugin extends Plugin {
         if (sub.id) {
             try {
                 const cached = this.getLocalCache();
+                const subscriptionCache = cached[sub.id];
                 delete cached[sub.id];
                 this.setLocalCache(cached);
+
+                // Clean up stale readStatus entries for deleted subscription's articles
+                if (subscriptionCache?.articles) {
+                    for (const a of subscriptionCache.articles) {
+                        delete this.readStatus[a.id];
+                    }
+                }
             } catch (error) {
                 logger.error("Failed to delete cached articles:", error);
             }
             this.unreadCounts.delete(sub.id);
+
+            // Persist the cleaned readStatus
+            await this.batchSaveReadStatus();
         }
 
         // Save current selection ID before merge
@@ -1653,7 +1707,8 @@ export default class RSSReaderPlugin extends Plugin {
             }
         }
 
-        container.querySelector("#rssList")!.innerHTML = this.renderSubscriptionListHTML();
+        const listEl = container.querySelector("#rssList");
+        if (listEl) listEl.innerHTML = this.renderSubscriptionListHTML();
         showMessage(this.i18n.deleteSuccess, 2000);
     }
 
@@ -1693,20 +1748,21 @@ export default class RSSReaderPlugin extends Plugin {
             }
         });
 
+        if (!dialog.element) return;
         const urlInput = dialog.element.querySelector("#rssUrl") as HTMLInputElement;
         const nameInput = dialog.element.querySelector("#rssName") as HTMLInputElement;
         const featuredSelect = dialog.element.querySelector("#featuredFeeds") as HTMLSelectElement;
         const confirmBtn = dialog.element.querySelector("#confirmAdd") as HTMLButtonElement;
 
         // Add real-time URL validation feedback
-        urlInput.addEventListener('input', () => {
+        urlInput.oninput = () => {
             const url = urlInput.value.trim();
             if (url && !this.isValidUrl(url)) {
                 urlInput.style.borderColor = 'var(--b3-theme-error)';
             } else {
                 urlInput.style.borderColor = '';
             }
-        });
+        };
 
         featuredSelect.onchange = () => {
             const val = featuredSelect.value;
@@ -1725,13 +1781,13 @@ export default class RSSReaderPlugin extends Plugin {
             
             // Validate URL is not empty
             if (!url) { 
-                showMessage(this.i18n.feedUrl || "Please enter feed URL", 2000); 
+                showMessage(this.i18n.feedUrlRequired || "Please enter feed URL", 2000); 
                 return; 
             }
             
             // Validate URL format
             if (!this.isValidUrl(url)) {
-                showMessage("Invalid URL format. Please enter a valid HTTP/HTTPS URL.", 3000);
+                showMessage(this.i18n.invalidUrl || "Invalid URL format. Please enter a valid HTTP/HTTPS URL.", 3000);
                 urlInput.focus();
                 return;
             }
@@ -1750,7 +1806,7 @@ export default class RSSReaderPlugin extends Plugin {
             }
 
             const newSub: Subscription = {
-                id: `sub_${Date.now()}`,
+                id: `sub_${this.settings.deviceId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
                 url,
                 name: name || url,
                 lastFetchTime: Date.now(),
@@ -1771,7 +1827,9 @@ export default class RSSReaderPlugin extends Plugin {
             if (rssList) {
                 rssList.innerHTML = this.renderSubscriptionListHTML();
             }
-            dialog.destroy();
+            if (dialog.element?.isConnected) {
+                dialog.destroy();
+            }
             showMessage(this.i18n.add + " " + this.i18n.success, 2000);
         };
     }
@@ -1799,7 +1857,7 @@ export default class RSSReaderPlugin extends Plugin {
 
         if (page.length === 0 && !append) {
             el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--b3-font-color-quaternary);font-size:13px;">
-                    <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:24px;height:24px;"><use xlink:href="#iconFile"></use></svg></div>
+                    <div style="font-size:24px;margin-bottom:8px;opacity:0.6;"><svg class="block__logoicon" style="width:24px;height:24px;"><use xlink:href="#iconRSSMain"></use></svg></div>
                     <div>${this.i18n.noArticles || 'No articles'}</div>
                 </div>`;
             return;
@@ -1830,12 +1888,12 @@ export default class RSSReaderPlugin extends Plugin {
                     <span style="width:3px;height:100%;min-height:20px;flex-shrink:0;${showUnreadBar ? 'background:var(--b3-theme-primary);' : 'background:transparent;'}border-radius:2px;align-self:stretch;margin-top:auto;margin-bottom:auto;"></span>
                     
                     <!-- Thumbnail image container -->
-                    ${thumbnailUrl ? `<img src="${thumbnailUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
+                    ${thumbnailUrl ? `<img src="${this.sanitizeUrl(thumbnailUrl)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
                     
                     <!-- Article content area -->
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:${fs.listItem};font-weight:${fontWeight};color:${textColor};line-height:1.4;margin-bottom:4px;">
-                            ${article.title}
+                            ${this.escapeHtml(article.title)}
                         </div>
                         <div style="font-size:${fs.listDate};color:var(--b3-font-color-quaternary);">
                             ${article.pubDate ? this.formatDate(article.pubDate) : ''}
@@ -1870,6 +1928,12 @@ export default class RSSReaderPlugin extends Plugin {
         this.displayedArticleCount = end;
         // Always setup events (cloning prevents duplicates)
         this.setupArticleListEvents(container);
+        // Update article count display after each render (including append/scroll)
+        const countEl = container.querySelector("#articleCount") as HTMLElement;
+        if (countEl) {
+            const unread = this.currentArticles.filter(a => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
+            countEl.textContent = unread > 0 ? `${unread}/${this.currentArticles.length}` : `${this.currentArticles.length}`;
+        }
         
         // Performance tracking
         if (DEBUG && startTime > 0) {
@@ -1882,9 +1946,10 @@ export default class RSSReaderPlugin extends Plugin {
     //Fix #5: Infinite scroll - properly append without removing existing items
     private setupInfiniteScroll(container: HTMLElement) {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
+        if (!articleList) return;
 
         // Remove old handler if exists to prevent duplicate listeners
-        if (this.listScrollHandler && articleList) {
+        if (this.listScrollHandler) {
             articleList.removeEventListener("scroll", this.listScrollHandler);
         }
 
@@ -1920,29 +1985,20 @@ export default class RSSReaderPlugin extends Plugin {
         const articleList = container.querySelector("#rssArticleList") as HTMLElement;
         if (!articleList || this.currentArticles.length === 0) return;
         
-        // Prevent infinite loop - max 3 retries
-        if (this.autoLoadRetryCount >= 3) {
-            this.autoLoadRetryCount = 0;
-            return;
-        }
-        
         // Use requestAnimationFrame for accurate DOM measurements
         requestAnimationFrame(() => {
             const { scrollHeight, clientHeight } = articleList;
             // If list doesn't fill the container and there are more articles, load more
             if (scrollHeight <= clientHeight + 10 && this.displayedArticleCount < this.currentArticles.length) {
                 this.isLoadingMore = true;
-                this.autoLoadRetryCount++;
                 this.renderArticleList(container, true);
                 // Fix: Only check once after render, don't recursively call
                 this.safeSetTimeout(() => {
-                    this.isLoadingMore = false;
-                    if (this.displayedArticleCount >= this.currentArticles.length) {
-                        this.autoLoadRetryCount = 0;
-                    }
+                this.isLoadingMore = false;
+                if (this.displayedArticleCount < this.currentArticles.length) {
+                    this.checkAndLoadMore(container);
+                }
                 }, 150);
-            } else {
-                this.autoLoadRetryCount = 0;
             }
         });
     }
@@ -1964,7 +2020,7 @@ export default class RSSReaderPlugin extends Plugin {
         articleList.addEventListener("click", (e) => {
             const item = (e.target as HTMLElement).closest(".article-item");
             if (!item) return;
-            const index = parseInt((item as HTMLElement).dataset.index!);
+            const index = parseInt((item as HTMLElement).dataset.index ?? '', 10);
             
             this.currentArticleIndex = index;
             this.selectArticle(index, container);
@@ -1989,7 +2045,7 @@ export default class RSSReaderPlugin extends Plugin {
             // Update previous item's styles
             const titleEl = prevSelected.querySelector('[style*="font-weight"]') as HTMLElement;
             if (titleEl) {
-                const prevIndex = parseInt(prevSelected.dataset.index || '0');
+                const prevIndex = parseInt(prevSelected.dataset.index || '0', 10);
                 const isUnread = !this.currentArticles[prevIndex]?.isRead;
                 titleEl.style.fontWeight = isUnread ? 'bold' : 'normal';
                 titleEl.style.color = isUnread ? 'var(--b3-font-color)' : '#888888';
@@ -1997,7 +2053,7 @@ export default class RSSReaderPlugin extends Plugin {
             // Show unread bar if needed
             const unreadBar = prevSelected.querySelector('span:first-child') as HTMLElement;
             if (unreadBar) {
-                const prevIndex = parseInt(prevSelected.dataset.index || '0');
+                const prevIndex = parseInt(prevSelected.dataset.index || '0', 10);
                 const isUnread = !this.currentArticles[prevIndex]?.isRead;
                 unreadBar.style.background = isUnread ? 'var(--b3-theme-primary)' : 'transparent';
             }
@@ -2028,25 +2084,35 @@ export default class RSSReaderPlugin extends Plugin {
 
         // Set article content
         const contentEl = container.querySelector("#rssArticleContent") as HTMLElement;
+        if (!contentEl) return;
+
         const fontSize = this.getFontSizeStyle();
         //Fix #2: Sticky header for article with save button always visible
         contentEl.innerHTML = `
             <div style="position:sticky;top:0;z-index:10;background:var(--b3-theme-background);padding:12px 20px 10px;border-bottom:1px solid var(--b3-border-color);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);">
                 <div style="flex:1;min-width:0;">
                     <h1 style="font-size:${fontSize.title};font-weight:600;color:var(--b3-font-color);line-height:1.4;margin:0 0 6px;word-break:break-word;">
-                        ${article.title}
+                        ${this.escapeHtml(article.title)}
                     </h1>
                     <div style="font-size:${fontSize.meta};color:var(--b3-font-color-quaternary);display:flex;gap:10px;align-items:center;">
                         <span>${article.pubDate ? this.formatDate(article.pubDate) : ''}</span>
-                        <a href="${article.link}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
+                        <a href="${this.sanitizeUrl(article.link)}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
                             ${this.i18n.originalLink}
                         </a>
                     </div>
                 </div>
-                <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
-                    <svg class="block__logoicon"><use xlink:href="#iconRSSSave"></use></svg>
-                    <span class="save-to-siyuan-btn-text">${this.i18n.saveNote || 'Save'}</span>
-                </button>
+                <div style="display:flex;gap:6px;flex-shrink:0;">
+                    ${!this.settings.autoMarkRead && !article.isRead ? `
+                    <button class="mark-read-article-btn" data-article-id="${article.id}" title="${this.i18n.markAllRead || 'Mark Read'}" aria-label="${this.i18n.markAllRead || 'Mark Read'}">
+                        <svg class="block__logoicon"><use xlink:href="#iconRSSCheck"></use></svg>
+                        <span style="font-size:11px;">${this.i18n.markAllRead || 'Mark Read'}</span>
+                    </button>
+                    ` : ''}
+                    <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
+                        <svg class="block__logoicon"><use xlink:href="#iconRSSSave"></use></svg>
+                        <span class="save-to-siyuan-btn-text">${this.i18n.saveNote || 'Save Note'}</span>
+                    </button>
+                </div>
             </div>
             <div style="max-width:780px;margin:0 auto;padding:20px;">
                 <div style="line-height:1.8;color:var(--b3-font-color);font-size:${fontSize.content};">
@@ -2076,6 +2142,27 @@ export default class RSSReaderPlugin extends Plugin {
                 }
             };
         }
+
+        const markReadBtn = contentEl.querySelector(".mark-read-article-btn") as HTMLButtonElement;
+        if (markReadBtn) {
+            markReadBtn.onclick = () => {
+                const articleId = markReadBtn.getAttribute('data-article-id');
+                const currentArticle = this.currentArticles.find(a => a.id === articleId);
+                if (currentArticle && !currentArticle.isRead) {
+                    currentArticle.isRead = true;
+                    this.markArticleRead(currentArticle.id, currentArticle.subscriptionId);
+                    // Re-render to update UI (button disappears, unread badge updates)
+                    const container = this.container;
+                    if (container) {
+                        this.renderArticleList(container, false);
+                        const rssList = container.querySelector("#rssList");
+                        if (rssList) {
+                            rssList.innerHTML = this.renderSubscriptionListHTML();
+                        }
+                    }
+                }
+            };
+        }
     }
 
     // ==================== RSS Fetching (via forwardProxy) ====================
@@ -2085,7 +2172,7 @@ export default class RSSReaderPlugin extends Plugin {
 
         // Strategy 1: browser fetch (bypasses kernel timeout issues)
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), FORWARD_PROXY_TIMEOUT);
+        const timer = this.safeSetTimeout(() => controller.abort(), FORWARD_PROXY_TIMEOUT);
         try {
             const resp = await fetch(url, {
                 signal: controller.signal,
@@ -2120,7 +2207,7 @@ export default class RSSReaderPlugin extends Plugin {
         }
 
         if (!xml) {
-            throw new Error(this.i18n.networkError || "Failed to fetch RSS feed");
+            throw new Error(this.i18n.networkError || "Network Error");
         }
 
         // Detect HTML/captcha responses instead of XML
@@ -2142,24 +2229,6 @@ export default class RSSReaderPlugin extends Plugin {
             throw new Error(this.i18n.rssParseFailed);
         }
 
-        // Extract HTML content from XML-parsed element
-        // In XML mode, innerHTML is unreliable - use textContent + re-parse as HTML
-        const extractHTML = (parent: Element, selector: string): string => {
-            const el = parent.querySelector(selector);
-            if (!el) return "";
-            const raw = el.textContent?.trim() || "";
-            if (!raw) return "";
-            // If content looks like HTML, re-parse it through DOM for proper rendering
-            if (raw.includes("<") && raw.includes(">")) {
-                try {
-                    const d = document.createElement("div");
-                    d.innerHTML = raw;
-                    return d.innerHTML;
-                } catch { return raw; }
-            }
-            return raw;
-        };
-
         const items: RSSItem[] = [];
 
         // RSS 2.0
@@ -2170,7 +2239,7 @@ export default class RSSReaderPlugin extends Plugin {
                 const link = this.getElText(itemEl, "link");
                 const pubDate = this.getElText(itemEl, "pubDate");
                 const descText = this.getElText(itemEl, "description");
-                let contentHTML = extractHTML(itemEl, "description");
+                let contentHTML = this.sanitizeHTML(this.getElText(itemEl, "description"));
 
                 // content:encoded has full article HTML (CDATA section)
                 itemEl.querySelectorAll("*").forEach(el => {
@@ -2178,15 +2247,9 @@ export default class RSSReaderPlugin extends Plugin {
                     if (tag.includes("encoded") || tag === "content") {
                         const raw = el.textContent?.trim() || "";
                         if (raw.length > contentHTML.length) {
-                            if (raw.includes("<") && raw.includes(">")) {
-                                try {
-                                    const d = document.createElement("div");
-                                    d.innerHTML = raw;
-                                    contentHTML = d.innerHTML;
-                                } catch { contentHTML = raw; }
-                            } else {
-                                contentHTML = raw;
-                            }
+                            contentHTML = raw.includes("<") && raw.includes(">")
+                                ? this.sanitizeHTML(raw)
+                                : raw;
                         }
                     }
                 });
@@ -2194,7 +2257,7 @@ export default class RSSReaderPlugin extends Plugin {
                 logger.log("Parsed:", title?.substring(0, 30), "contentLen:", contentHTML.length);
 
                 if (title || link) {
-                    items.push({ title: title || "Untitled", link, pubDate, content: contentHTML || descText, description: descText });
+                    items.push({ title: title || this.i18n.untitled || "Untitled", link, pubDate, content: contentHTML || descText, description: descText });
                 }
             });
             return { items };
@@ -2208,9 +2271,9 @@ export default class RSSReaderPlugin extends Plugin {
                 const linkEl = entry.querySelector("link[href]");
                 const link = linkEl?.getAttribute("href") || this.getElText(entry, "link");
                 const pubDate = this.getElText(entry, "published") || this.getElText(entry, "updated");
-                const contentHTML = extractHTML(entry, "content") || extractHTML(entry, "summary");
+                const contentHTML = this.sanitizeHTML(this.getElText(entry, "content")) || this.sanitizeHTML(this.getElText(entry, "summary"));
                 const contentText = this.getElText(entry, "content") || this.getElText(entry, "summary");
-                items.push({ title: title || "Untitled", link: link || "", pubDate, content: contentHTML || contentText, description: contentText });
+                items.push({ title: title || this.i18n.untitled || "Untitled", link: link || "", pubDate, content: contentHTML || contentText, description: contentText });
             });
             return { items };
         }
@@ -2221,42 +2284,6 @@ export default class RSSReaderPlugin extends Plugin {
     private getElText(parent: Element, selector: string): string {
         const el = parent.querySelector(selector);
         return el?.textContent?.trim() || "";
-    }
-
-    private getElHTML(parent: Element, selector: string): string {
-        const el = parent.querySelector(selector);
-        if (!el) return "";
-
-        // First try innerHTML
-        let html = el.innerHTML || "";
-
-        // When innerHTML is empty, textContent may contain actual content like CDATA sections
-        const textContent = el.textContent || "";
-        if (!html || html.length < textContent.length) {
-            html = textContent;
-        }
-
-        // Handle special cases where HTML is in textContent but innerHTML is empty, create DOM to parse
-        if ((!html || html === textContent) && textContent.includes("<") && textContent.includes(">")) {
-            try {
-                const temp = document.createElement("div");
-                temp.innerHTML = textContent;
-                const parsed = temp.innerHTML;
-                if (parsed && parsed.length > html.length) {
-                    html = parsed;
-                }
-            } catch {
-                // If parsing fails, keep original value
-            }
-        }
-
-        // Decode HTML entities
-        html = html.replace(/&lt;/g, "<")
-                   .replace(/&gt;/g, ">")
-                   .replace(/&amp;/g, "&")
-                   .replace(/&quot;/g, '"')
-                   .replace(/&#39;/g, "'");
-        return html.trim();
     }
 
     private async fetchAndCacheArticles(sub: Subscription): Promise<Article[]> {
@@ -2272,7 +2299,7 @@ export default class RSSReaderPlugin extends Plugin {
                     thumbnailUrl = imgMatch[1];
                 }
             }
-            const articleId = this.generateArticleId(item.link);
+            const articleId = this.generateArticleId(item.link, item.title, item.pubDate);
 
             // Store full content in LRU cache
             this.setArticleContent(articleId, item.content || item.description || '');
@@ -2283,7 +2310,6 @@ export default class RSSReaderPlugin extends Plugin {
                 pubDate: item.pubDate,
                 content: item.content || '', // keep for local cache persistence
                 description: item.description || '',
-                author: item.author,
                 id: articleId,
                 subscriptionId: sub.id,
                 isRead: this.readStatus[articleId]?.isRead || false,
@@ -2295,76 +2321,68 @@ export default class RSSReaderPlugin extends Plugin {
         const merged = this.mergeArticles(newArticles, cached);
         await this.cacheArticles(sub.id, merged);
 
-        sub.lastFetchTime = Date.now();
-        this.stampSubscription(sub);
-
         // Return without content for in-memory article list
         return this.stripContent(merged);
     }
 
-    // Fetch with exponential backoff retry and request deduplication
-    private async fetchWithRetry(sub: Subscription, maxRetries: number): Promise<{ items: RSSItem[] }> {
-        // Request lock: prevent duplicate concurrent requests for same subscription
-        const lockKey = sub.id;
-        if (this.pendingRequests.has(lockKey)) {
-            logger.log(`Request already in progress for ${sub.name}, reusing existing promise`);
-            return this.pendingRequests.get(lockKey)!;
-        }
+    // Reference counter for deduplication lock
+    private pendingRequestRefs: Map<string, number> = new Map();
 
-        // Create the actual fetch promise
-        const fetchPromise = (async () => {
-            let lastError: Error | null = null;
-            
-            for (let attempt = 0; attempt <= maxRetries; attempt++) {
-                try {
-                    const startTime = DEBUG ? performance.now() : 0;
-                    this.perfMetrics.fetchCount++;
-                    
-                    const result = await this.fetchAndParseRSS(sub.url);
-                    
-                    if (DEBUG && startTime > 0) {
-                        const duration = performance.now() - startTime;
-                        this.perfMetrics.totalFetchTime += duration;
-                        logger.log(`[Perf] Fetch ${sub.name}: ${duration.toFixed(0)}ms (avg: ${(this.perfMetrics.totalFetchTime / this.perfMetrics.fetchCount).toFixed(0)}ms)`);
-                    }
-                    
-                    return result;
-                } catch (error) {
-                    lastError = error instanceof Error ? error : new Error(String(error));
-                    logger.warn(`Fetch attempt ${attempt + 1}/${maxRetries + 1} failed for ${sub.name}:`, lastError.message);
-                    
-                    // Don't retry on last attempt
-                    if (attempt < maxRetries) {
-                        // Exponential backoff: 1s, 2s, 4s...
-                        const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
-                        logger.log(`Retrying in ${delay}ms...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+    private async fetchWithRetry(sub: Subscription, maxRetries: number): Promise<{ items: RSSItem[] }> {
+        const lockKey = sub.id;
+        let fetchPromise = this.pendingRequests.get(lockKey);
+        if (!fetchPromise) {
+            fetchPromise = (async () => {
+                let lastError: Error | null = null;
+
+                for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                    try {
+                        const startTime = DEBUG ? performance.now() : 0;
+                        this.perfMetrics.fetchCount++;
+
+                        const result = await this.fetchAndParseRSS(sub.url);
+
+                        if (DEBUG && startTime > 0) {
+                            const duration = performance.now() - startTime;
+                            this.perfMetrics.totalFetchTime += duration;
+                            logger.log(`[Perf] Fetch ${sub.name}: ${duration.toFixed(0)}ms (avg: ${(this.perfMetrics.totalFetchTime / this.perfMetrics.fetchCount).toFixed(0)}ms)`);
+                        }
+
+                        return result;
+                    } catch (error) {
+                        lastError = error instanceof Error ? error : new Error(String(error));
+                        logger.warn(`Fetch attempt ${attempt + 1}/${maxRetries + 1} failed for ${sub.name}:`, lastError.message);
+
+                        if (attempt < maxRetries) {
+                            const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+                            logger.log(`Retrying in ${delay}ms...`);
+                            await this.safeTimeoutPromise(delay);
+                        }
                     }
                 }
-            }
-            
-            // All retries failed
-            throw lastError || new Error(`Failed to fetch ${sub.name} after ${maxRetries + 1} attempts`);
-        })();
 
-        // Store in pending map
-        this.pendingRequests.set(lockKey, fetchPromise);
+                throw lastError || new Error(`Failed to fetch ${sub.name} after ${maxRetries + 1} attempts`);
+            })();
 
+            this.pendingRequests.set(lockKey, fetchPromise);
+        }
+
+        this.pendingRequestRefs.set(lockKey, (this.pendingRequestRefs.get(lockKey) ?? 0) + 1);
         try {
             return await fetchPromise;
         } finally {
-            // Always clean up the lock
-            this.pendingRequests.delete(lockKey);
+            const refs = (this.pendingRequestRefs.get(lockKey) ?? 1) - 1;
+            if (refs <= 0) {
+                this.pendingRequests.delete(lockKey);
+                this.pendingRequestRefs.delete(lockKey);
+            } else {
+                this.pendingRequestRefs.set(lockKey, refs);
+            }
         }
     }
 
-    private generateArticleId(link: string): string {
-        let hash = 0;
-        for (let i = 0; i < link.length; i++) {
-            hash = ((hash << 5) - hash) + link.charCodeAt(i);
-            hash = hash & hash;
-        }
-        return `article_${Math.abs(hash).toString(36)}`;
+    private generateArticleId(link: string, title?: string, pubDate?: string): string {
+        return utils.generateArticleId(link, title, pubDate);
     }
 
     private mergeArticles(newArticles: Article[], cachedArticles: Article[]): Article[] {
@@ -2431,7 +2449,8 @@ export default class RSSReaderPlugin extends Plugin {
 
     private setArticleContent(id: string, content: string): void {
         if (!content) return;
-        if (this.articleContentCache.size >= RSSReaderPlugin.MAX_CONTENT_CACHE) {
+        if (!this.articleContentCache.has(id) &&
+            this.articleContentCache.size >= RSSReaderPlugin.MAX_CONTENT_CACHE) {
             const oldest = this.contentAccessOrder.shift();
             if (oldest) this.articleContentCache.delete(oldest);
         }
@@ -2554,58 +2573,48 @@ export default class RSSReaderPlugin extends Plugin {
      * Batch save read status with debouncing
      * Collects all pending changes and saves them together to reduce I/O operations
      */
-    private async batchSaveReadStatus(): Promise<void> {
-        if (this.readStatusSaveTimer) {
-            clearTimeout(this.readStatusSaveTimer);
-        }
-
-        this.readStatusSaveTimer = this.safeSetTimeout(async () => {
+    private batchSaveReadStatus(): Promise<void> {
+        return this.enqueueSave(async () => {
             if (this.pendingReadStatusChanges.size === 0) return;
+            const batch = new Map(this.pendingReadStatusChanges);
+            this.pendingReadStatusChanges.clear();
+            logger.log(`[Batch Save] Saving ${batch.size} read status changes`);
 
             try {
-                for (const [articleId, status] of this.pendingReadStatusChanges.entries()) {
+                for (const [articleId, status] of batch) {
                     this.readStatus[articleId] = status;
                 }
 
-                // Merge with latest storage snapshot to minimize overwrite window
                 const stored: ReadStatus = await this.loadData(READ_STATUS_NAME) || {};
-                for (const [articleId, status] of Object.entries(stored)) {
-                    const existing = this.readStatus[articleId];
-                    if (!existing) {
-                        this.readStatus[articleId] = status;
-                    } else if (status.readAt && existing.readAt && status.readAt > existing.readAt) {
-                        this.readStatus[articleId] = status;
+                const merged: ReadStatus = { ...stored };
+                for (const [articleId, status] of Object.entries(this.readStatus)) {
+                    const existing = merged[articleId];
+                    if (!existing || (status.readAt ?? 0) >= (existing.readAt ?? 0)) {
+                        merged[articleId] = status;
                     }
                 }
+                await this.saveData(READ_STATUS_NAME, merged);
+                this.readStatus = merged;
 
-                // Re-read right before write to catch any sync-delivered changes
-                const latestStored: ReadStatus = await this.loadData(READ_STATUS_NAME) || {};
-                for (const [articleId, status] of Object.entries(latestStored)) {
-                    const merged = this.readStatus[articleId];
-                    if (!merged) {
-                        this.readStatus[articleId] = status;
-                    } else if (status.readAt && merged.readAt && status.readAt > merged.readAt) {
-                        this.readStatus[articleId] = status;
-                    }
-                }
-
-                await this.saveData(READ_STATUS_NAME, this.readStatus);
-
-                const savedCount = this.pendingReadStatusChanges.size;
-                this.pendingReadStatusChanges.clear();
-
-                logger.log(`[Batch Save] Saved ${savedCount} read status changes`);
-
-                if (this.container?.isConnected) {
-                    const rssList = this.container.querySelector("#rssList");
-                    if (rssList) {
-                        this.updateUnreadCounts().then(() => {
-                            rssList.innerHTML = this.renderSubscriptionListHTML();
-                        });
-                    }
-                }
+                this.scheduleReadStatusUiUpdate();
             } catch (error) {
                 logger.error("Failed to batch save read status:", error);
+            }
+        });
+    }
+
+    private readStatusUiTimer: ReturnType<typeof setTimeout> | null = null;
+    private scheduleReadStatusUiUpdate(): void {
+        if (this.readStatusUiTimer) clearTimeout(this.readStatusUiTimer);
+        this.readStatusUiTimer = setTimeout(() => {
+            this.readStatusUiTimer = null;
+            if (this.container?.isConnected) {
+                const rssList = this.container.querySelector("#rssList");
+                if (rssList) {
+                    this.updateUnreadCounts().then(() => {
+                        rssList.innerHTML = this.renderSubscriptionListHTML();
+                    });
+                }
             }
         }, 1000);
     }
@@ -2621,11 +2630,7 @@ export default class RSSReaderPlugin extends Plugin {
         // Update unread badge count for this subscription
         if (subscriptionId) {
             const current = this.unreadCounts.get(subscriptionId) ?? 0;
-            if (current > 0) {
-                this.unreadCounts.set(subscriptionId, current - 1);
-            } else {
-                this.unreadCounts.set(subscriptionId, 0);
-            }
+            this.unreadCounts.set(subscriptionId, Math.max(0, current - 1));
             this.updateBadgeDOM(subscriptionId);
         }
         
@@ -2641,15 +2646,16 @@ export default class RSSReaderPlugin extends Plugin {
         const count = this.unreadCounts.get(subscriptionId) ?? 0;
         if (badge) {
             if (count > 0) {
+                (badge as HTMLElement).style.display = '';
                 badge.textContent = this.formatUnreadCount(count);
             } else {
-                badge.remove();
+                (badge as HTMLElement).style.display = 'none';
             }
         }
     }
 
     private formatUnreadCount(count: number): string {
-        return count > 99 ? '99+' : String(count);
+        return utils.formatUnreadCount(count);
     }
 
     /**
@@ -2747,6 +2753,30 @@ export default class RSSReaderPlugin extends Plugin {
                 if (trimmedCount > 0) {
                     logger.log(`[Cache Cleanup] Trimmed ${trimmedCount} old articles (older than 90 days)`);
                 }
+            }
+
+            // Purge readStatus entries for articles that no longer exist in any cached subscription
+            const validArticleIds = new Set<string>();
+            for (const entry of Object.values(cached)) {
+                if (entry?.articles) {
+                    for (const a of entry.articles) {
+                        validArticleIds.add(a.id);
+                    }
+                }
+            }
+            let purgedCount = 0;
+            for (const articleId of Object.keys(this.readStatus)) {
+                if (!validArticleIds.has(articleId)) {
+                    delete this.readStatus[articleId];
+                    purgedCount++;
+                }
+            }
+            if (purgedCount > 0) {
+                logger.log(`[Cache Cleanup] Purged ${purgedCount} stale read status entries`);
+                await this.batchSaveReadStatus();
+            }
+
+            if (cleanedCount > 0 || trimmedCount > 0) {
                 // Refresh unread counts after cache modification
                 await this.updateUnreadCounts();
                 if (this.container?.isConnected) {
@@ -2761,40 +2791,41 @@ export default class RSSReaderPlugin extends Plugin {
         }
     }
 
-    private getSubscriptionName(subId: string): string {
-        return this.subscriptions.find(s => s.id === subId)?.name || subId;
-    }
-
     // ==================== Actions ====================
 
     private async markAllRead(container: HTMLElement) {
-        if (this.currentArticles.length === 0) return;
-        
-        // Batch mark all articles as read
-        for (const a of this.currentArticles) {
-            a.isRead = true;
-            this.markArticleRead(a.id);
-        }
-        
-        // Force immediate save for bulk operations
-        if (this.readStatusSaveTimer) {
-            clearTimeout(this.readStatusSaveTimer);
-        }
-        await this.batchSaveReadStatus();
-        
-        if (this.currentSubscriptionIndex >= 0) {
-            await this.cacheArticles(this.subscriptions[this.currentSubscriptionIndex].id, this.currentArticles);
-            // Update unread count badge
-            const currentSubId = this.subscriptions[this.currentSubscriptionIndex].id;
-            this.unreadCounts.set(currentSubId, 0);
-            const rssList = container.querySelector("#rssList");
-            if (rssList) {
-                rssList.innerHTML = this.renderSubscriptionListHTML();
+        if (this.currentSubscriptionIndex < 0 || this.currentSubscriptionIndex >= this.subscriptions.length) return;
+        const sub = this.subscriptions[this.currentSubscriptionIndex];
+        const gen = this.nextFetchGen(sub.id);
+        const allArticles = await this.getCachedArticles(sub.id);
+        if (!allArticles || allArticles.length === 0) return;
+
+        let markedCount = 0;
+        for (const a of allArticles) {
+            if (!a.isRead) {
+                a.isRead = true;
+                this.markArticleRead(a.id, sub.id);
+                markedCount++;
             }
         }
+
+        if (markedCount === 0) return;
+
+        if (!this.isFetchGenValid(sub.id, gen)) return;
+        await this.batchSaveReadStatus();
+        await this.cacheArticles(sub.id, allArticles);
+
+        // Reload current displayed articles from updated cache
+        this.currentArticles = this.stripContent(allArticles);
         this.renderArticleList(container, false);
         const countEl = container.querySelector("#articleCount") as HTMLElement;
-        if (countEl) countEl.textContent = `${this.currentArticles.length}`;
+        if (countEl) countEl.textContent = `${allArticles.length}`;
+
+        this.unreadCounts.set(sub.id, 0);
+        const rssList = container.querySelector("#rssList");
+        if (rssList) {
+            rssList.innerHTML = this.renderSubscriptionListHTML();
+        }
         showMessage(this.i18n.markAllReadSuccess, 2000);
     }
 
@@ -2811,20 +2842,16 @@ export default class RSSReaderPlugin extends Plugin {
                 articles = await this.fetchAndCacheArticles(sub);
             }
             
-            // Mark all articles as read in cache
+            // Mark all articles as read in cache with subscription ID for badge updates
             let markedCount = 0;
             for (const a of articles) {
                 if (!a.isRead) {
                     a.isRead = true;
-                    this.markArticleRead(a.id);
+                    this.markArticleRead(a.id, sub.id);
                     markedCount++;
                 }
             }
             
-            // Force immediate save for bulk operations
-            if (this.readStatusSaveTimer) {
-                clearTimeout(this.readStatusSaveTimer);
-            }
             await this.batchSaveReadStatus();
             await this.cacheArticles(sub.id, articles);
             
@@ -2877,24 +2904,27 @@ export default class RSSReaderPlugin extends Plugin {
             const cached = await this.getCachedArticles(sub.id);
             
             // Convert new articles
-            const newArticles = feed.items.map(item => ({
-                ...item,
-                id: this.generateArticleId(item.link),
-                subscriptionId: sub.id,
-                isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
-                cachedAt: Date.now(),
-                thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
-            } as Article));
-            
+            const newArticles = feed.items.map(item => {
+                const articleId = this.generateArticleId(item.link, item.title, item.pubDate);
+                return {
+                    ...item,
+                    id: articleId,
+                    subscriptionId: sub.id,
+                    isRead: this.readStatus[articleId]?.isRead || false,
+                    cachedAt: Date.now(),
+                    thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
+                } as Article;
+            });
+
             // Merge articles (preserve read status)
             const merged = this.mergeArticles(newArticles, cached);
             await this.cacheArticles(sub.id, merged);
-            
+
             sub.lastFetchTime = Date.now();
             this.stampSubscription(sub);
             // Persist timestamps for sync correctness
             await this.saveSubscriptionsWithMerge();
-            
+
             // Incremental UI update
             await this.updateUIAfterRefresh(index, container, merged);
             
@@ -2907,6 +2937,7 @@ export default class RSSReaderPlugin extends Plugin {
     
     // Incremental UI update after refresh
     private async updateUIAfterRefresh(index: number, container: HTMLElement, merged: Article[]) {
+        if (index < 0 || index >= this.subscriptions.length) return;
         // Always update unread count and badge DOM regardless of current selection
         const unread = merged.filter((a: Article) => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
         this.unreadCounts.set(this.subscriptions[index].id, unread);
@@ -2958,15 +2989,15 @@ export default class RSSReaderPlugin extends Plugin {
         return imgMatch ? imgMatch[1] : '';
     }
     
-    private applyTemplate(article: Article, content: string, fileName: string, tags: string = "", showLink: boolean = true, showSiteName: boolean = true, showDateTime: boolean = true): string {
+    private applyTemplate(article: Article, content: string, fileName: string, showLink: boolean = true, showSiteName: boolean = true, showDateTime: boolean = true): string {
         if (!this.settings.useTemplate) {
             // Default format
-            let metaLines: string[] = [];
+            const metaLines: string[] = [];
             if (article.pubDate) {
                 metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
             }
             if (article.link) {
-                metaLines.push(`> [Original link](${article.link})`);
+                metaLines.push(`> [Original link](${this.escapeHtml(article.link)})`);
             }
             return [
                 `# ${fileName}`,
@@ -2988,7 +3019,8 @@ export default class RSSReaderPlugin extends Plugin {
         // Build content based on user choices
         const lines: string[] = [];
         
-        // Top separator
+        lines.push(`# ${fileName}`);
+        lines.push("");
         lines.push("---");
         
         // Meta info lines
@@ -3001,7 +3033,7 @@ export default class RSSReaderPlugin extends Plugin {
         }
         
         if (showLink && article.link) {
-            lines.push(`> [${this.i18n.originalLink}](${article.link})`);
+            lines.push(`> [${this.i18n.originalLink}](${this.escapeHtml(article.link)})`);
         }
         
         // Bottom separator
@@ -3017,7 +3049,7 @@ export default class RSSReaderPlugin extends Plugin {
     private async refreshCurrentFeed(container: HTMLElement) {
         if (this.currentSubscriptionIndex < 0) return;
         showMessage(this.i18n.refreshing, 1500);
-        await this.selectSubscription(this.currentSubscriptionIndex, container);
+        await this.selectSubscription(this.currentSubscriptionIndex, container, true);
         showMessage(this.i18n.refreshSuccess, 1500);
     }
 
@@ -3037,7 +3069,7 @@ export default class RSSReaderPlugin extends Plugin {
             // Show notebook selection dialog
             const result = await this.showNotebookSelectionDialog(openNotebooks);
             if (!result) return; // User cancelled selection
-            const { notebookId, tags, showLink, showSiteName, showDateTime } = result;
+            const { notebookId, showLink, showSiteName, showDateTime } = result;
 
             let fileName = article.title
                 .replace(/[/\\:*?"<>|]/g, " ")
@@ -3053,7 +3085,7 @@ export default class RSSReaderPlugin extends Plugin {
             logger.log("Markdown length:", articleMarkdown.length, "preview (first 500):", articleMarkdown.substring(0, 500));
 
             // Apply template
-            const fullMd = this.applyTemplate(article, articleMarkdown, fileName, tags, showLink, showSiteName, showDateTime);
+            const fullMd = this.applyTemplate(article, articleMarkdown, fileName, showLink, showSiteName, showDateTime);
 
             showMessage(`${this.i18n.savingTo}: ${openNotebooks.find((n: any) => n.id === notebookId)?.name || ""}...`, 2000);
 
@@ -3068,13 +3100,14 @@ export default class RSSReaderPlugin extends Plugin {
             logger.log("Create doc response:", JSON.stringify(res).substring(0, 500));
 
             let docId: string;
-            if (res.code === 201 || res.code === 202) {
-                // File already exists, use unique suffix
+            if (res.code !== 0) {
+                // File may already exist or other error, retry with unique suffix
                 const uniqueName = `${fileName}_${Date.now().toString(36)}`;
                 const res2 = await fetchSyncPost("/api/filetree/createDocWithMd", {
                     notebook: notebookId,
                     path: `/${uniqueName}`,
-                    markdown: fullMd.replace(new RegExp(`# ${fileName}`, 'g'), `# ${uniqueName}`)
+                    // eslint-disable-next-line security/detect-non-literal-regexp
+                    markdown:             fullMd.replace(new RegExp(`# ${fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'), `# ${uniqueName}`)
                 });
                 if (!res2.data) {
                     showMessage(`${this.i18n.saveFailed}: ${this.i18n.docExists}`, 3000);
@@ -3089,14 +3122,18 @@ export default class RSSReaderPlugin extends Plugin {
             }
 
             // Step 2: Flush transaction
-            await fetchSyncPost("/api/sqlite/flushTransaction", {}).catch(() => {});
+            await fetchSyncPost("/api/sqlite/flushTransaction", {}).catch(e => {
+                logger.error("flushTransaction failed:", e);
+            });
 
             // Step 3: Convert remote images to local assets (reference from siyuan-chrome)
             if (docId) {
                 fetchSyncPost("/api/format/netImg2LocalAssets", {
                     id: docId,
                     url: article.link || ""
-                }).catch(() => {}); // Ignore failure,不影响保存
+                }).catch(e => {
+                    logger.error("netImg2LocalAssets failed:", e);
+                });
             }
 
             // Step 4: Record last used notebook
@@ -3113,214 +3150,14 @@ export default class RSSReaderPlugin extends Plugin {
     }
 
 
-    //Fix #1: DOM-based HTML→Markdown conversion (replaces fragile regex approach)
-    // Regex-based conversion produced malformed markdown that crashed SiYuan's parser,
-    // causing "Cannot read properties of null reading 'removeAttribute'" when opening docs.
-    private htmlToMarkdown(html: string): string {
-        if (!html) return "";
-
-        // Sanitize first to remove dangerous elements
-        const sanitized = this.sanitizeHTML(html);
-        logger.log("htmlToMarkdown: input len=", html.length, "sanitized len=", sanitized.length);
-        logger.log("htmlToMarkdown: sanitized preview=", sanitized.substring(0, 300));
-
-        const temp = document.createElement("div");
-        temp.innerHTML = sanitized;
-        logger.log("htmlToMarkdown: DOM childNodes=", temp.childNodes.length, "innerHTML len=", temp.innerHTML.length);
-
-        // Debug: log each child node
-        Array.from(temp.childNodes).forEach((child, i) => {
-            logger.log(`Child ${i}: nodeType=${child.nodeType} nodeName=${child.nodeName}`,
-                child.nodeType === 1 ? `tag=${(child as Element).tagName} childCount=${child.childNodes.length}` : `text="${(child.textContent || "").substring(0, 50)}"`);
-        });
-
-        const md = this._nodeToMarkdown(temp);
-        logger.log("htmlToMarkdown: raw md len=", md.length, "preview=", md.substring(0, 300));
-
-        // Fallback: if DOM-based conversion returned empty but we had content,
-        // use a simple regex-based approach
-        if (!md.trim() && sanitized.trim()) {
-            logger.log("htmlToMarkdown: DOM conversion returned empty, falling back to regex");
-            return this.simpleHtmlToMarkdown(sanitized);
-        }
-
-        // Clean up whitespace
-        return md.replace(/\n{3,}/g, "\n\n").trim();
-    }
-
-    private _nodeToMarkdown(node: Node, depth: number = 0): string {
-        // Guard against circular DOM references (max depth 50)
-        if (depth > 50) {
-            logger.log("_nodeToMarkdown: MAX DEPTH reached");
-            return "";
-        }
-
-        if (node.nodeType === Node.TEXT_NODE) {
-            return (node.textContent || "").replace(/&nbsp;/g, " ");
-        }
-        if (node.nodeType !== Node.ELEMENT_NODE) {
-            if (depth === 0) logger.log("_nodeToMarkdown: non-element at depth 0, type=", node.nodeType);
-            return "";
-        }
-
-        const el = node as HTMLElement;
-        const tag = el.tagName.toLowerCase();
-
-        // Debug: log tag at depth 0-1 only to avoid spam
-        if (depth <= 1) logger.log(`_nodeToMarkdown: depth=${depth} tag=${tag} children=${el.childNodes.length}`);
-
-        switch (tag) {
-            case "br":
-                return "\n";
-            case "p":
-            case "div": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (inner + "\n\n") : "";
-            }
-            case "h1": case "h2": case "h3": case "h4": case "h5": case "h6": {
-                // Fix: Use correct markdown heading format with # prefix
-                const level = parseInt(tag[1]);
-                const prefix = "#".repeat(level);
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`${prefix} ${inner.trim()}\n\n`) : "";
-            }
-            case "strong":
-            case "b": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`**${inner}**`) : "";
-            }
-            case "em":
-            case "i": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`*${inner}*`) : "";
-            }
-            case "u": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`<u>${inner}</u>`) : "";
-            }
-            case "s":
-            case "del": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`~~${inner}~~`) : "";
-            }
-            case "a": {
-                const href = el.getAttribute("href") || "";
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return href ? (`[${inner}](${href})`) : inner;
-            }
-            case "img": {
-                const src = el.getAttribute("src") || "";
-                const alt = el.getAttribute("alt") || "";
-                const cls = el.getAttribute("class") || "";
-                const width = el.getAttribute("width") || "";
-                const height = el.getAttribute("height") || "";
-                // Treat emoji/small icon images as inline text
-                if (/emoji|emojione|twemoji/.test(cls) || 
-                    (width && parseInt(width) <= 32) || 
-                    (height && parseInt(height) <= 32)) {
-                    return alt || "";
-                }
-                return src ? (`![${alt}](${src})\n`) : "";
-            }
-            case "ul": {
-                let result = "\n";
-                Array.from(el.children).forEach((child) => {
-                    if (child.tagName.toLowerCase() === "li") {
-                        const inner = this._nodeToMarkdown(child, depth + 1).trim();
-                        result += `- ${inner}\n`;
-                    }
-                });
-                return result + "\n";
-            }
-            case "ol": {
-                let result = "\n";
-                let count = 1;
-                Array.from(el.children).forEach((child) => {
-                    if (child.tagName.toLowerCase() === "li") {
-                        const inner = this._nodeToMarkdown(child, depth + 1).trim();
-                        result += `${count}. ${inner}\n`;
-                        count++;
-                    }
-                });
-                return result + "\n";
-            }
-            case "blockquote": {
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                const lines = inner.trim().split("\n").filter((l: string) => l.trim());
-                if (lines.length === 0) return "";
-                return lines.map((l: string) => `> ${l}`).join("\n") + "\n\n";
-            }
-            case "code": {
-                // Only inline code (pre > code handled below)
-                if (el.parentElement && el.parentElement.tagName.toLowerCase() === "pre") {
-                    return this._nodeToMarkdown(el, depth + 1);
-                }
-                const inner = this._nodeToMarkdown(el, depth + 1);
-                return inner ? (`\`${inner}\``) : "";
-            }
-            case "pre": {
-                const codeEl = el.querySelector("code");
-                const text = codeEl ? (codeEl.textContent || "") : (el.textContent || "");
-                if (!text.trim()) return "";
-                // Use triple backticks for code blocks
-                const escaped = text.replace(/```/g, "\\`\\`\\`");
-                return `\`\`\`
-${escaped}
-\`\`\`
-
-`;
-            }
-            case "table": {
-                // Build markdown table from HTML table elements
-                const rows: string[] = [];
-                el.querySelectorAll("tr").forEach((tr) => {
-                    const cells: string[] = [];
-                    tr.querySelectorAll("td, th").forEach((td) => {
-                        cells.push(this._nodeToMarkdown(td, depth + 1).trim().replace(/\|/g, " / "));
-                    });
-                    if (cells.length > 0) rows.push(cells.join(" | "));
-                });
-                if (rows.length === 0) return "";
-                const colCount = (rows[0]?.match(/\|/g) || []).length + 1;
-                const sep = Array(colCount).fill("---").join(" | ");
-                // First row as header, separator in the middle, rest as data rows
-                const headerRow = rows[0];
-                const dataRows = rows.slice(1);
-                if (dataRows.length === 0) return "\n" + headerRow + "\n" + sep + "\n\n";
-                return "\n" + headerRow + "\n" + sep + "\n" + dataRows.join("\n") + "\n\n";
-            }
-            case "hr":
-                return "\n---\n\n";
-            case "script":
-            case "style":
-            case "iframe":
-            case "svg":
-                return ""; // Strip dangerous/non-renderable elements
-            default: {
-                // For unknown elements, just recurse into children
-                let result = "";
-                Array.from(node.childNodes).forEach((child) => {
-                    result += this._nodeToMarkdown(child, depth + 1);
-                });
-                return result;
-            }
-        }
-    }
-
     // ==================== Scheduled Updates ====================
-
-    private startScheduledUpdates() {
-        this.updateInterval = setInterval(() => this.checkForUpdates(), 30 * 60 * 1000);
-        this.checkForUpdates();
-        // Daily cache cleanup to automatically remove old articles
-        this.cleanupInterval = setInterval(() => this.cleanupCache(), 24 * 60 * 60 * 1000);
-    }
 
     private async checkForUpdates() {
         if (this.subscriptions.length === 0) return;
         let newArticleCount = 0;
 
-        for (const sub of this.subscriptions) {
+        const subs = [...this.subscriptions];
+        for (const sub of subs) {
             try {
                 const feed = await this.fetchAndParseRSS(sub.url);
                 if (!feed.items?.length) continue;
@@ -3328,7 +3165,7 @@ ${escaped}
                 const cached = await this.getCachedArticles(sub.id);
                 const newItems = feed.items.map(item => ({
                     ...item,
-                    id: this.generateArticleId(item.link),
+                    id: this.generateArticleId(item.link, item.title, item.pubDate),
                     subscriptionId: sub.id,
                     cachedAt: Date.now(),
                     thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
@@ -3337,8 +3174,6 @@ ${escaped}
 
                 if (merged.length > cached.length) {
                     await this.cacheArticles(sub.id, merged);
-                    sub.lastFetchTime = Date.now();
-                    this.stampSubscription(sub);
                     newArticleCount += merged.length - cached.length;
 
                     const unread = merged.filter(a =>
@@ -3346,8 +3181,11 @@ ${escaped}
                     ).length;
                     this.unreadCounts.set(sub.id, unread);
                 }
+
+                sub.lastFetchTime = Date.now();
+                this.stampSubscription(sub);
             } catch (e) {
-                // Silent fail during background checks
+                logger.error("[Background Check] Failed:", e);
             }
         }
 
@@ -3358,7 +3196,7 @@ ${escaped}
             if (listEl) {
                 listEl.innerHTML = this.renderSubscriptionListHTML();
             }
-            if (this.currentSubscriptionIndex >= 0) {
+            if (this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex < this.subscriptions.length) {
                 const sub = this.subscriptions[this.currentSubscriptionIndex];
                 const merged = await this.getCachedArticles(sub.id);
                 if (merged.length > this.currentArticles.length) {
@@ -3380,48 +3218,55 @@ ${escaped}
         if (this.updateInterval) { clearInterval(this.updateInterval); this.updateInterval = null; }
         if (this.settings.autoRefreshInterval > 0) {
             this.updateInterval = setInterval(() => {
-                if (this.container) this.refreshAllFeeds(this.container);
+                if (this.container) {
+                    try { this.refreshAllFeeds(this.container); } catch (e) { logger.error("refreshAllFeeds error:", e); }
+                }
             }, this.settings.autoRefreshInterval * 60 * 1000);
-        } else {
-            // Keep default background check even when user saves settings with auto-refresh disabled
-            this.updateInterval = setInterval(() => this.checkForUpdates(), 30 * 60 * 1000);
         }
     }
 
     private async refreshAllFeeds(container: HTMLElement) {
         showMessage(this.i18n.refreshing, 2000);
         
+        const gen = ++this.refreshGeneration;
         let hasNewArticles = false;
         
-        for (const sub of this.subscriptions) {
+        const subs = [...this.subscriptions];
+        for (const sub of subs) {
             try {
                 const feed = await this.fetchWithRetry(sub, 3);
+                if (gen !== this.refreshGeneration) return;
                 const cached = await this.getCachedArticles(sub.id);
                 
-                const newArticles = feed.items.map(item => ({
-                    ...item,
-                    id: this.generateArticleId(item.link),
-                    subscriptionId: sub.id,
-                    isRead: this.readStatus[this.generateArticleId(item.link)]?.isRead || false,
-                    cachedAt: Date.now(),
-                    thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
-                } as Article));
+                const newArticles = feed.items.map(item => {
+                    const articleId = this.generateArticleId(item.link, item.title, item.pubDate);
+                    return {
+                        ...item,
+                        id: articleId,
+                        subscriptionId: sub.id,
+                        isRead: this.readStatus[articleId]?.isRead || false,
+                        cachedAt: Date.now(),
+                        thumbnail: this.extractThumbnail(item.content || item.description || '') || undefined
+                    } as Article;
+                });
                 
                 const merged = this.mergeArticles(newArticles, cached);
                 
-                // Check if there are new articles
                 if (merged.length > cached.length) {
                     hasNewArticles = true;
                 }
                 
+                if (gen !== this.refreshGeneration) return;
                 await this.cacheArticles(sub.id, merged);
                 sub.lastFetchTime = Date.now();
                 this.stampSubscription(sub);
                 
-            } catch (e) { 
-                /* silent */ 
+            } catch (e) {
+                logger.error("[Refresh All Feeds] Failed:", e);
             }
         }
+        
+        if (gen !== this.refreshGeneration) return;
         
         // Update all subscription badges from refreshed cache
         if (this.container?.isConnected) {
@@ -3433,9 +3278,10 @@ ${escaped}
         }
         
         // Update current article list if there are new articles
-        if (hasNewArticles && this.currentSubscriptionIndex >= 0 && this.container) {
+        if (hasNewArticles && this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex < this.subscriptions.length && this.container) {
             const sub = this.subscriptions[this.currentSubscriptionIndex];
             const merged = await this.getCachedArticles(sub.id);
+            if (gen !== this.refreshGeneration) return;
             await this.updateUIAfterRefresh(this.currentSubscriptionIndex, container, merged);
         }
         
@@ -3448,16 +3294,17 @@ ${escaped}
     // ==================== Dialogs ====================
 
     // Notebook selection dialog
-    private async showNotebookSelectionDialog(notebooks: any[]): Promise<{ notebookId: string; tags: string; showLink: boolean; showSiteName: boolean; showDateTime: boolean } | null> {
+    private async showNotebookSelectionDialog(notebooks: any[]): Promise<{ notebookId: string; showLink: boolean; showSiteName: boolean; showDateTime: boolean } | null> {
         return new Promise((resolve) => {
             const dialog = new Dialog({
                 title: `${this.i18n.selectNotebook || 'Select Notebook'}`,
+                destroyCallback: () => resolve(null),
                 content: `<div class="b3-dialog__content" style="padding:16px;">
-                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || 'Select save location'}</div>
+                    <div style="margin-bottom:12px;font-size:13px;color:var(--b3-font-color-tertiary);">${this.i18n.selectSaveLocation || 'Please select save location'}</div>
                     <div style="display:flex;align-items:center;gap:12px;">
                         <select class="b3-select fn__block" id="notebookSelect" style="font-size:14px;flex:1;">
-                            ${notebooks.map((nb, index) => 
-                                `<option value="${nb.id}" ${index === 0 ? 'selected' : ''}>${nb.name}</option>`
+                            ${notebooks.map((nb) => 
+                                `<option value="${nb.id}" ${nb.id === this.settings.lastUsedNotebookId ? 'selected' : ''}>${nb.name}</option>`
                             ).join('')}
                         </select>
                         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
@@ -3503,9 +3350,9 @@ ${escaped}
             const useTemplateCheckbox = dialog.element.querySelector("#useTemplate") as HTMLInputElement;
             const templateOptionsSection = dialog.element.querySelector("#templateOptionsSection") as HTMLElement;
             if (useTemplateCheckbox && templateOptionsSection) {
-                useTemplateCheckbox.addEventListener("change", () => {
+                useTemplateCheckbox.onchange = () => {
                     templateOptionsSection.style.display = useTemplateCheckbox.checked ? '' : 'none';
-                });
+                };
             }
 
             (dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement).onclick = () => {
@@ -3513,7 +3360,7 @@ ${escaped}
                 resolve(null);
             };
 
-            dialog.element.querySelector("#confirmNotebook")?.addEventListener("click", () => {
+            (dialog.element.querySelector("#confirmNotebook") as HTMLButtonElement).onclick = () => {
                 const select = dialog.element.querySelector("#notebookSelect") as HTMLSelectElement;
                 const remember = (dialog.element.querySelector("#rememberNotebook") as HTMLInputElement).checked;
                 const notebookId = select.value;
@@ -3529,23 +3376,19 @@ ${escaped}
                 this.settings.templateShowLink = showLink;
                 this.settings.templateShowSiteName = showSiteName;
                 this.settings.templateShowDateTime = showDateTime;
-                this.saveSettings();
-                
                 if (remember) {
                     this.settings.lastUsedNotebookId = notebookId;
-                    this.saveSettings();
                 }
+                this.saveSettings();
                 
                 dialog.destroy();
-                resolve({ notebookId, tags: "", showLink, showSiteName, showDateTime });
-            });
+                resolve({ notebookId, showLink, showSiteName, showDateTime });
+            };
         });
     }
     
     private escapeHtml(str: string): string {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+        return sanitize.escapeHtml(str);
     }
 
     private showHelpDialog() {
@@ -3553,13 +3396,14 @@ ${escaped}
         if (this.isHelpDialogOpen) {
             return;
         }
-        // Set flag SYNCHRONOUSLY before any async operations
-        this.isHelpDialogOpen = true;
         logger.log('Opening help dialog');
         
-        const dialog = new Dialog({
+        let dialog: Dialog;
+        try {
+            this.isHelpDialogOpen = true;
+            dialog = new Dialog({
             title: `${this.i18n.helpTitle}`,
-            content: `<div class="b3-dialog__content rss-help-dialog" style="padding:16px;font-size:13px;">
+            content: `<div class="b3-dialog__content" style="padding:16px;font-size:13px;">
                 <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;">
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">J/K</kbd></div><div>${this.i18n.helpPrevNext}</div>
                     <div><kbd style="background:var(--b3-theme-surface-lighter);padding:3px 8px;border-radius:3px;font-size:12px;">O</kbd></div><div>${this.i18n.helpOpenOriginal}</div>
@@ -3571,7 +3415,7 @@ ${escaped}
                 </div>
             </div>
             <div class="b3-dialog__action">
-                <button class="b3-button b3-button--text" id="helpDialogClose">OK</button>
+                <button class="b3-button b3-button--text" id="helpDialogClose">${this.i18n.confirm || 'Confirm'}</button>
             </div>`,
             width: "360px",
             destroyCallback: () => {
@@ -3581,6 +3425,11 @@ ${escaped}
             }
         });
         
+        } catch (err) {
+            this.isHelpDialogOpen = false;
+            throw err;
+        }
+
         // Set z-index and add close button handler
         requestAnimationFrame(() => {
             if (dialog.element) {
@@ -3589,7 +3438,7 @@ ${escaped}
                 if (closeBtn) {
                     closeBtn.addEventListener('click', () => {
                         dialog.destroy();
-                    });
+                    }, { once: true });
                 }
             }
         });
@@ -3607,7 +3456,7 @@ ${escaped}
                         <option value="30" ${this.settings.articlesPerPage === 30 ? 'selected' : ''}>30</option>
                         <option value="50" ${this.settings.articlesPerPage === 50 ? 'selected' : ''}>50</option>
                     </select>
-                    <div class="setting-hint" style="font-size:12px;color:var(--b3-font-color-quaternary);margin-top:4px;">${this.i18n.batchLoadHint}</div>
+                    <div style="font-size:12px;color:var(--b3-font-color-quaternary);margin-top:4px;">${this.i18n.batchLoadHint}</div>
                 </div>
                 <div class="b3-label">
                     <label>${this.i18n.fontSize}: <span id="fontSizeValue">${this.settings.fontSize}px</span></label>
@@ -3650,21 +3499,21 @@ ${escaped}
         const fontSlider = dialog.element.querySelector("#fontSize") as HTMLInputElement;
         const fontLabel = dialog.element.querySelector("#fontSizeValue") as HTMLSpanElement;
         if (fontSlider && fontLabel) {
-            fontSlider.addEventListener("input", () => {
+            fontSlider.oninput = () => {
                 fontLabel.textContent = `${fontSlider.value}px`;
-            });
+            };
         }
 
         (dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement).onclick = () => dialog.destroy();
 
-        dialog.element.querySelector("#saveSettings")?.addEventListener("click", async () => {
-            this.settings.articlesPerPage = parseInt((dialog.element.querySelector("#articlesPerPage") as HTMLSelectElement).value);
-            this.settings.fontSize = parseInt((dialog.element.querySelector("#fontSize") as HTMLInputElement).value);
+        (dialog.element.querySelector("#saveSettings") as HTMLButtonElement).onclick = async () => {
+            this.settings.articlesPerPage = parseInt((dialog.element.querySelector("#articlesPerPage") as HTMLSelectElement).value, 10);
+            this.settings.fontSize = parseInt((dialog.element.querySelector("#fontSize") as HTMLInputElement).value, 10);
             this.settings.layout = (dialog.element.querySelector("#layoutMode") as HTMLSelectElement).value as 'horizontal' | 'vertical';
             this.settings.autoMarkRead = (dialog.element.querySelector("#autoMarkRead") as HTMLInputElement).checked;
-            this.settings.autoRefreshInterval = parseInt((dialog.element.querySelector("#autoRefreshInterval") as HTMLSelectElement).value);
+            this.settings.autoRefreshInterval = parseInt((dialog.element.querySelector("#autoRefreshInterval") as HTMLSelectElement).value, 10);
 
-            await this.saveData(SETTINGS_NAME, this.settings);
+            await this.saveSettings();
             this.setupAutoRefresh();
             
             // Re-render entire UI to apply layout and font changes
@@ -3683,110 +3532,30 @@ ${escaped}
             
             showMessage(this.i18n.settingsSaved, 2000);
             dialog.destroy();
-        });
+        };
     }
-    // Only for UI display - adds responsive styles (not for markdown conversion)
-    private sanitizeHTMLForDisplay(html: string): string {
-        let c = this.sanitizeHTML(html);
-        c = c.replace(/<img(?![^>]*style=)/gi, '<img style="max-width:100%;height:auto;border-radius:4px;margin:8px 0;" ');
-        return c;
-    }
-
-    private openRSSReader() {
-        showMessage(this.i18n.rssReader, 2000);
-    }
-
-    // ==================== Utilities ====================
-
-    // Simple regex-based HTML-to-Markdown fallback (used when DOM-based conversion fails)
-    private simpleHtmlToMarkdown(html: string): string {
-        let md = html;
-        // Headers
-        md = md.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n');
-        md = md.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n');
-        md = md.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n');
-        md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '#### $1\n\n');
-        md = md.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '##### $1\n\n');
-        md = md.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '###### $1\n\n');
-        // Images (before links)
-        md = md.replace(/<img[^>]*src=["']([^"']*)["'][^>]*>/gi, '![]($1)\n');
-        // Links
-        md = md.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
-        // Bold/italic
-        md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
-        md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
-        // Block elements and newlines
-        md = md.replace(/<\/p>/gi, '\n\n');
-        md = md.replace(/<\/div>/gi, '\n');
-        md = md.replace(/<br\s*\/?>/gi, '\n');
-        md = md.replace(/<hr[^>]*>/gi, '\n---\n');
-        // Remove remaining tags
-        md = md.replace(/<[^>]+>/g, '');
-        // Decode entities
-        md = md.replace(/&nbsp;/g, ' ');
-        md = md.replace(/&amp;/g, '&');
-        md = md.replace(/&lt;/g, '<');
-        md = md.replace(/&gt;/g, '>');
-        md = md.replace(/&quot;/g, '"');
-        // Clean up whitespace
-        return md.replace(/\n{3,}/g, '\n\n').trim();
-    }
-
-    private stripHTML(html: string): string {
-        return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-    }
-
     private sanitizeHTML(html: string): string {
-        let c = html;
-        // Remove dangerous tags and attributes
-        c = c.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-        c = c.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-        c = c.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
-        c = c.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
-        c = c.replace(/javascript:/gi, '');
-        // Fix: Remove extra img attributes style to prevent SiYuan AST parsing error
-        c = c.replace(/<img(?![^>]*loading=)/gi, '<img loading="lazy" ');
-        // Replace emoji/small icon images with their alt text to prevent them becoming separate blocks
-        c = c.replace(/<img[^>]*class=["'][^"']*(?:emoji|emojione|twemoji|apple-emoji)[^"']*["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, '$1');
-        c = c.replace(/<img[^>]*(?:width|height)=["'](\d+)["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, (match, dim, alt) => {
-            const dimNum = parseInt(dim);
-            if (dimNum <= 32) return alt;
-            return match;
-        });
-        return c;
+        return sanitize.sanitizeHTML(html);
     }
 
-    /**
-     * Validate URL format
-     * @param url - URL string to validate
-     * @returns true if URL is valid HTTP/HTTPS URL
-     */
+    private sanitizeHTMLForDisplay(html: string): string {
+        return sanitize.sanitizeHTMLForDisplay(html);
+    }
+
+    private sanitizeUrl(url: string): string {
+        return sanitize.sanitizeUrl(url);
+    }
+
     private isValidUrl(url: string): boolean {
-        try {
-            const urlObj = new URL(url);
-            // Only allow http and https protocols
-            return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
-        } catch (error) {
-            return false;
-        }
+        return sanitize.isValidUrl(url);
+    }
+
+    private htmlToMarkdown(html: string): string {
+        return sanitize.htmlToMarkdown(html);
     }
 
     private formatDate(dateStr: string): string {
-        const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return dateStr;
-        const diff = Date.now() - date.getTime();
-        const mins = Math.floor(diff / 60000);
-        if (mins < 1) return this.i18n.justNow;
-        if (mins < 60) return `${mins}${this.i18n.minutesAgo}`;
-        const hours = Math.floor(mins / 60);
-        if (hours < 24) return `${hours}${this.i18n.hoursAgo}`;
-        const days = Math.floor(hours / 24);
-        if (days === 1) return this.i18n.yesterday;
-        if (days < 7) return `${days}${this.i18n.daysAgo}`;
-        // @ts-ignore
-        const lang = window.siyuan?.config?.lang || 'en';
-        const locale = lang.replace('_', '-');
-        return date.toLocaleDateString(locale);
+        return utils.formatDate(dateStr, this.i18n as any);
     }
 }
 

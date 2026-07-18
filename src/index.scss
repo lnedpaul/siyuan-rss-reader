@@ -89,17 +89,6 @@
     }
 }
 
-// Load more button
-#loadMoreBtn {
-    .b3-button {
-        width: 100%;
-        
-        &:hover {
-            background-color: var(--b3-list-hover);
-        }
-    }
-}
-
 // Dark mode support - comprehensive
 body.b3-theme-dark,
 .protyle-wysiwyg[data-theme="dark"],
@@ -118,36 +107,6 @@ body.b3-theme-dark,
     --btn-help: hsl(var(--hue-help), 50%, 34%);
     --btn-help-hover: hsl(var(--hue-help), 50%, 44%);
 
-    // 深色模式下不修改文章列表样式
-    // 所有样式由TS内联控制，自动适配主题变量
-
-    .rss-article-body {
-        img {
-            background-color: var(--b3-theme-surface-lighter);
-            border: 1px solid var(--b3-border-color);
-        }
-
-        pre {
-            background-color: var(--b3-theme-surface-lighter);
-            border: 1px solid var(--b3-border-color);
-        }
-
-        code {
-            background-color: var(--b3-theme-surface-lighter);
-        }
-
-        blockquote {
-            border-left-color: var(--b3-theme-primary-light);
-            color: var(--b3-font-color-tertiary);
-        }
-
-        table {
-            th {
-                background-color: var(--b3-theme-surface-lighter);
-            }
-        }
-    }
-
     .rss-item {
         &:hover {
             background-color: var(--b3-list-hover);
@@ -159,23 +118,6 @@ body.b3-theme-dark,
     }
 
     // 深色模式下增强对比度
-    .rss-article-excerpt {
-        color: var(--b3-font-color-tertiary);
-    }
-
-    .rss-article-meta {
-        color: var(--b3-font-color-quaternary);
-    }
-
-    // 分类标签深色模式
-    .rss-category-filter-btn {
-        &.active {
-            background-color: var(--b3-theme-primary) !important;
-            color: white !important;
-            border: none !important;
-        }
-    }
-
     // 对话框深色模式
     .b3-dialog {
         .b3-dialog__content {
@@ -188,34 +130,10 @@ body.b3-theme-dark,
         }
     }
 
-    // 按钮深色模式增强
-    .b3-button--outline {
-        border-color: var(--b3-border-color);
-        color: var(--b3-font-color);
-
-        &:hover {
-            background-color: var(--b3-list-hover);
-            border-color: var(--b3-theme-primary);
-        }
-    }
-}
-
-// 系统级深色模式检测
-@media (prefers-color-scheme: dark) {
-    .rss-article-body {
-        img {
-            background-color: var(--b3-theme-surface-lighter);
-            border: 1px solid var(--b3-border-color);
-        }
-
-        pre, code {
-            background-color: var(--b3-theme-surface-lighter);
-        }
-    }
 }
 
 // Scrollbar styles
-#rssList, #articleList, #articleContent {
+#rssList, #rssArticleList, #rssArticleContent {
     &::-webkit-scrollbar {
         width: 6px;
         height: 6px;
@@ -247,7 +165,8 @@ body.b3-theme-dark,
     cursor: pointer;
     overflow: hidden;
     transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                background-color 0.3s ease;
+                background-color 0.3s ease,
+                border-radius 0.3s ease;
     box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
     background-color: var(--b3-theme-primary);
     color: var(--b3-font-color);
@@ -355,38 +274,6 @@ body.b3-theme-dark,
     }
     
     /* button click effect */
-    &:active {
-        transform: translate(2px, 2px);
-    }
-}
-
-// Simplified add button for subscription list (when subscriptions exist)
-.rss-add-btn-simple {
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--btn-add);
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: var(--btn-add);
-    color: var(--b3-font-color);
-    transition: all 0.2s;
-    padding: 0;
-    
-    svg {
-        width: 18px;
-        height: 18px;
-        stroke: currentColor;
-        fill: none;
-    }
-    
-    &:hover {
-        background-color: var(--btn-add-hover);
-        border-color: var(--btn-add);
-    }
-    
     &:active {
         transform: translate(2px, 2px);
     }
@@ -688,8 +575,7 @@ body.b3-theme-dark,
             border-radius: 14px !important;
             z-index: 1 !important;
         }
-}
-
+    }
 
     // Keep all action buttons visible on touch (no sibling hiding)
     .subscription-actions:has(.mark-read-rss:hover) .refresh-rss,

@@ -144,7 +144,6 @@ This project is licensed under the [MIT License](https://github.com/lnedpaul/siy
 ## 🙏 Acknowledgments
 
 - [SiYuan Note](https://github.com/siyuan-note/siyuan) - A powerful personal knowledge management system
-- [DOM Purify](https://github.com/cure53/DOMPurify) - HTML sanitization
 - [@SunsetSail](https://github.com/SunsetSail) - Contributed event listener cleanup and text selection support (PR #3)
 
 ---

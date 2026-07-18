@@ -144,7 +144,6 @@ siyuan-rss-reader/
 ## 🙏 致谢
 
 - [思源笔记](https://github.com/siyuan-note/siyuan) - 强大的个人知识管理系统
-- [DOM Purify](https://github.com/cure53/DOMPurify) - HTML 净化
 - [@SunsetSail](https://github.com/SunsetSail) - 贡献事件监听器重构和文本选择支持 (PR #3)
 
 ---
