@@ -1,39 +1,31 @@
 // RSS Reader Plugin Styles
-
-:root {
-    --rss-button-size: 24px;
-    --rss-icon-size: 16px;
-    --rss-item-padding: 8px 10px;
-    --rss-item-gap: 8px;
-    --rss-item-margin-bottom: 4px;
-
-    // Pastel hues
-    --hue-add: 200;        // 粉蓝
-    --hue-markread: 45;    // 粉黄
-    --hue-refresh: 140;    // 粉绿
-    --hue-delete: 340;     // 粉红
-    --hue-settings: 25;    // 粉橙
-    --hue-help: 270;       // 粉紫
-
-    // Light mode: moderate lightness, pastel saturation
-    --btn-add: hsl(var(--hue-add), 45%, 52%);
-    --btn-add-hover: hsl(var(--hue-add), 45%, 62%);
-    --btn-markread: hsl(var(--hue-markread), 50%, 52%);
-    --btn-markread-hover: hsl(var(--hue-markread), 50%, 62%);
-    --btn-refresh: hsl(var(--hue-refresh), 40%, 50%);
-    --btn-refresh-hover: hsl(var(--hue-refresh), 40%, 60%);
-    --btn-delete: hsl(var(--hue-delete), 45%, 52%);
-    --btn-delete-hover: hsl(var(--hue-delete), 45%, 62%);
-    --btn-settings: hsl(var(--hue-settings), 45%, 52%);
-    --btn-settings-hover: hsl(var(--hue-settings), 45%, 62%);
-    --btn-help: hsl(var(--hue-help), 40%, 50%);
-    --btn-help-hover: hsl(var(--hue-help), 40%, 60%);
-}
+// Design language (v0.1.34 UI pass — transparent rainbow semantics):
+// - Seven actions, seven hues (red/orange/yellow/green/cyan/blue/purple):
+//     delete=red, mark-read=orange, refresh=yellow, add=green,
+//     settings=cyan, help=blue, save=purple.
+// - Transparent style: a tinted translucent fill + same-hue glyph in the
+//   round state; hover fills solid with the same hue + white glyph/label.
+//   The translucent base reads well on both light and dark SiYuan themes.
+// - border-radius is FIXED at half the diameter and never transitions — only
+//   width animates, so the circle opens into a capsule keeping all four
+//   corners (no ellipse, no stretch).
+// - Icon and label are flex-centered both horizontally AND vertically in the
+//   expanded capsule (label uses display:flex + align-items:center + lh:1).
+// - Every button shares:
+//     <button><span class="rss-pill-icon">…</span><span class="rss-pill-label">…</span></button>
+// - Hover scoped to @media (hover: hover) and (pointer: fine); touch gets
+//   plain positive declarations. Keyboard: :focus-visible ring everywhere.
 
 .rss-reader-container {
     display: flex;
     height: 100%;
     overflow: hidden;
+
+    :focus-visible {
+        outline: 2px solid var(--b3-theme-primary);
+        outline-offset: 2px;
+        border-radius: 2px;
+    }
 
     .rss-sidebar {
         display: flex;
@@ -47,14 +39,14 @@
             padding: 4px;
 
             .rss-item {
-                padding: var(--rss-item-padding);
+                padding: 8px 10px;
                 border-radius: 4px;
                 cursor: pointer;
-                transition: background-color 0.15s;  // ✅ Only animate background, not border
-                margin-bottom: var(--rss-item-margin-bottom);
+                transition: background-color 0.15s;
+                margin-bottom: 4px;
                 display: flex;
                 align-items: center;
-                gap: var(--rss-item-gap);
+                gap: 8px;
 
                 &:hover {
                     background-color: var(--b3-list-hover);
@@ -62,13 +54,11 @@
 
                 &.active {
                     background-color: var(--b3-theme-surface-lighter);
-                    
-                    // ✅ Use the placeholder div as indicator
+
                     > div:first-child {
                         background-color: var(--b3-theme-primary);
                     }
-                    
-                    // ✅ Selected text color
+
                     .subscription-name div {
                         color: var(--b3-theme-primary) !important;
                         font-weight: 500;
@@ -87,49 +77,6 @@
     &:hover, &:active {
         background-color: var(--b3-theme-primary-light);
     }
-}
-
-// Dark mode support - comprehensive
-body.b3-theme-dark,
-.protyle-wysiwyg[data-theme="dark"],
-[data-theme="dark"] {
-    // Dark mode: subdued pastel tones, higher saturation to keep color visible
-    --btn-add: hsl(var(--hue-add), 55%, 32%);
-    --btn-add-hover: hsl(var(--hue-add), 55%, 42%);
-    --btn-markread: hsl(var(--hue-markread), 60%, 32%);
-    --btn-markread-hover: hsl(var(--hue-markread), 60%, 42%);
-    --btn-refresh: hsl(var(--hue-refresh), 50%, 30%);
-    --btn-refresh-hover: hsl(var(--hue-refresh), 50%, 40%);
-    --btn-delete: hsl(var(--hue-delete), 55%, 34%);
-    --btn-delete-hover: hsl(var(--hue-delete), 55%, 44%);
-    --btn-settings: hsl(var(--hue-settings), 55%, 32%);
-    --btn-settings-hover: hsl(var(--hue-settings), 55%, 42%);
-    --btn-help: hsl(var(--hue-help), 50%, 34%);
-    --btn-help-hover: hsl(var(--hue-help), 50%, 44%);
-
-    .rss-item {
-        &:hover {
-            background-color: var(--b3-list-hover);
-        }
-
-        &.active {
-            background-color: var(--b3-theme-surface-lighter);
-        }
-    }
-
-    // 深色模式下增强对比度
-    // 对话框深色模式
-    .b3-dialog {
-        .b3-dialog__content {
-            background-color: var(--b3-theme-background);
-            color: var(--b3-font-color);
-        }
-
-        .b3-label {
-            color: var(--b3-font-color);
-        }
-    }
-
 }
 
 // Scrollbar styles
@@ -153,280 +100,125 @@ body.b3-theme-dark,
     }
 }
 
-// Save to note button styles - with slide animation
-.save-to-siyuan-btn {
+// ============================================================
+// Unified pill button skeleton (transparent rainbow).
+// --rss-hue is set per button; static = tinted translucent fill +
+// same-hue glyph. border-radius fixed at half diameter (never transitions).
+// ============================================================
+@mixin rss-pill($size) {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    border: 1px solid var(--b3-theme-primary);
-    border-radius: 50%;
-    cursor: pointer;
+    position: relative;
+    box-sizing: border-box;
     overflow: hidden;
+    cursor: pointer;
+    padding: 0;
+    border: none;
+    border-radius: ($size / 2);   // fixed half-height radius: circle when w==h,
+                                  // capsule when w>h — corners never deform
+    width: $size;
+    height: $size;
+    background-color: hsla(var(--rss-hue, 210), 70%, 55%, 0.16);
+    color: hsl(var(--rss-hue, 210), 80%, 46%);
+    // NOTE: no border-radius transition (would morph through an ellipse).
     transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
                 background-color 0.3s ease,
-                border-radius 0.3s ease;
-    box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-    background-color: var(--b3-theme-primary);
-    color: var(--b3-font-color);
-    padding: 0;
-    
-    svg {
-        width: 14px;
-        height: 14px;
-        stroke: currentColor;
-        fill: none;
+                color 0.3s ease;
+
+    .rss-pill-icon {
         flex-shrink: 0;
-        transition-duration: 0.3s;
-    }
-    
-    &:hover {
-        width: 130px;
-        border-radius: 20px;
-        background-color: var(--b3-theme-primary-light);
-        border-color: var(--b3-theme-primary);
-        
-        .save-to-siyuan-btn-text {
-            opacity: 1;
-            max-width: 80px;
-            margin-left: 6px;
-        }
-    }
-}
-
-// Save button text
-.save-to-siyuan-btn-text {
-    opacity: 0;
-    overflow: hidden;
-    max-width: 0;
-    color: currentColor;
-    font-size: 14px;
-    font-weight: 600;
-    margin-left: 0;
-    white-space: nowrap;
-    transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                opacity 0.3s ease,
-                margin-left 0.4s ease;
-}
-
-// Enhanced add subscription button with slide animation
-.rss-add-btn-enhanced {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--btn-add);
-    border-radius: 16px;
-    cursor: pointer;
-    position: relative;
-    overflow: hidden;
-    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                background-color 0.3s ease;
-    box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-    background-color: var(--btn-add);
-    color: var(--b3-font-color);
-    padding: 0;
-    
-    /* plus sign */
-    .rss-add-btn-sign {
-        width: 16px;
         display: flex;
-        align-items: center;
+        align-items: center;      // vertical center
         justify-content: center;
-        
+        height: 100%;
+
         svg {
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
+            margin: 0;         // neutralize SiYuan .block__logoicon margin/padding
+            padding: 0;
             stroke: currentColor;
             fill: none;
+            flex-shrink: 0;
         }
     }
-    
-    /* text */
-    .rss-add-btn-text {
+
+    .rss-pill-label {
+        display: flex;
+        align-items: center;      // vertical center (fixes up/down misalignment)
+        line-height: 1;
         opacity: 0;
         overflow: hidden;
         max-width: 0;
         color: currentColor;
-        font-size: 14px;
-        font-weight: 600;
-        margin-left: 0;
         white-space: nowrap;
+        font-size: 13px;
+        font-weight: 500;
         transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
                     opacity 0.3s ease,
                     margin-left 0.4s ease;
     }
-    
-    /* hover effect on button width */
-    &:hover {
-        width: 100px;
-        background-color: var(--btn-add-hover);
-        border-color: var(--btn-add);
-
-        .rss-add-btn-text {
-            opacity: 1;
-            max-width: 80px;
-            margin-left: 6px;
-            overflow: visible;
-        }
-    }
-    
-    /* button click effect */
-    &:active {
-        transform: translate(2px, 2px);
-    }
 }
 
-// Container for action buttons - fixed width matched to hover expansion
+// ============================================================
+// Buttons — transparent rainbow semantics (one hue per action).
+// ============================================================
+
+// Save to note — purple
+.save-to-siyuan-btn {
+    @include rss-pill(36px);
+    --rss-hue: 268;
+    box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+// Add subscription (list bottom) — green
+.rss-add-btn-enhanced {
+    @include rss-pill(32px);
+    --rss-hue: 145;
+    box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+// Container for per-subscription actions
 .subscription-actions {
     position: relative;
-    width: 120px;
-    height: 24px;
+    width: 124px;
+    height: 32px;
     display: flex;
     align-items: center;
 }
 
-// Magic: hide non-hovered buttons only when a button is actually hovered
-.subscription-actions:has(.mark-read-rss:hover) .refresh-rss,
-.subscription-actions:has(.mark-read-rss:hover) .delete-rss,
-.subscription-actions:has(.refresh-rss:hover) .mark-read-rss,
-.subscription-actions:has(.refresh-rss:hover) .delete-rss,
-.subscription-actions:has(.delete-rss:hover) .mark-read-rss,
-.subscription-actions:has(.delete-rss:hover) .refresh-rss {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-}
-
-// Article count bar: hide when empty
-// Override SiYuan's global user-select:none to allow text selection in article content
-#rssArticleContent {
-    user-select: text;
-    -webkit-user-select: text;
-}
-
-// Allow text selection in article list (titles)
-#rssArticleList {
-    user-select: text;
-    -webkit-user-select: text;
-}
-
-// Article count bar: hide when empty
-#articleCount:empty {
-    display: none;
-}
-
-// Enhanced action buttons with slide animation
+// Per-subscription actions (mark-read / refresh / delete)
 .rss-action-btn-enhanced {
+    @include rss-pill(32px);
     position: absolute;
-    height: 26px;
-    width: 26px;
-    border-radius: 13px;
-    padding: 0;
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    cursor: pointer;
-    box-sizing: border-box;
     z-index: 1;
-    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                opacity 0.3s ease,
-                background-color 0.3s ease,
-                z-index 0s 0.4s;
-    
-    // Colored backgrounds - visual trick: border same as background
-    &.mark-read-rss {
-        background-color: var(--btn-markread);
-        border-color: var(--btn-markread);
-        color: var(--b3-font-color);
-    }
-    
-    &.refresh-rss {
-        background-color: var(--btn-refresh);
-        border-color: var(--btn-refresh);
-        color: var(--b3-font-color);
-    }
-    
-    &.delete-rss {
-        background-color: var(--btn-delete);
-        border-color: var(--btn-delete);
-        color: var(--b3-font-color);
-    }
-    
-    // Hover state: expands, icon+text centered, background lightens
-    &:hover {
-        width: 120px;
-        z-index: 2;
-        transition-delay: 0s;
-        
-        &.mark-read-rss {
-            background-color: var(--btn-markread-hover);
-        }
-        
-        &.refresh-rss {
-            background-color: var(--btn-refresh-hover);
-        }
-        
-        &.delete-rss {
-            background-color: var(--btn-delete-hover);
-        }
-    }
 }
 
-// --- Expand direction anchors ---
+// Mark-read button in the article header — orange (same as mark-read)
+.mark-read-article-btn {
+    @include rss-pill(32px);
+    --rss-hue: 28;
+}
+
+// Expand direction anchors + per-action hues (subscription actions)
 .mark-read-rss {
     left: 0;
+    --rss-hue: 28;    // orange
 }
 
 .refresh-rss {
     left: 50%;
     transform: translateX(-50%);
+    --rss-hue: 48;    // yellow
 }
 
 .delete-rss {
     right: 0;
+    --rss-hue: 355;   // red
 }
 
-// Icon container
-.rss-action-btn-sign {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-    
-    svg {
-        width: 100%;
-        height: 100%;
-        stroke: currentColor;
-        fill: none;
-    }
-}
-
-// Text container
-.rss-action-btn-text {
-    font-size: 14px;
-    font-weight: 500;
-    white-space: nowrap;
-    max-width: 0;
-    opacity: 0;
-    overflow: hidden;
-    margin-left: 0;
-    transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                opacity 0.3s ease,
-                margin-left 0.4s ease;
-}
-
-// Show text on hover
-.rss-action-btn-enhanced:hover .rss-action-btn-text {
-    max-width: 80px;
-    opacity: 1;
-    margin-left: 6px;
-}
-
-// Bottom bar container - positioned relative for absolute buttons, fixed width centered
+// Bottom bar (settings/help)
 .rss-bottom-bar {
     position: relative;
     width: 80px;
@@ -439,102 +231,24 @@ body.b3-theme-dark,
 }
 
 .rss-bottom-btn {
+    @include rss-pill(32px);
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    height: 28px;
-    width: 28px;
-    border-radius: 14px;
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    cursor: pointer;
-    box-sizing: border-box;
-    padding: 0;
-    background-color: transparent;
-    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                background-color 0.3s ease,
-                border-radius 0.3s ease,
-                z-index 0s 0.4s;
     z-index: 1;
 
-    &.tb-settings { left: 6px; }
-    &.tb-help { right: 6px; }
-
-    svg {
-        width: 14px;
-        height: 14px;
-        flex-shrink: 0;
-        stroke: currentColor;
-        fill: none;
-    }
-
-    .rss-bottom-btn-icon {
-        width: 26px;
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .rss-bottom-btn-text {
-        font-size: 12px;
-        font-weight: 500;
-        white-space: nowrap;
-        max-width: 0;
-        opacity: 0;
-        overflow: hidden;
-        margin-left: 0;
-        transition: max-width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-                    opacity 0.3s ease,
-                    margin-left 0.4s ease;
-    }
-
     &.tb-settings {
-        background-color: var(--btn-settings);
-        border-color: var(--btn-settings);
-        color: var(--b3-font-color);
-
-        &:hover {
-            background-color: var(--btn-settings-hover);
-        }
+        left: 6px;
+        --rss-hue: 190;   // cyan
     }
 
     &.tb-help {
-        background-color: var(--btn-help);
-        border-color: var(--btn-help);
-        color: var(--b3-font-color);
-
-        &:hover {
-            background-color: var(--btn-help-hover);
-        }
-    }
-
-    &:hover {
-        width: calc(100% - 12px);
-        border-radius: 14px;
-        z-index: 2;
-        transition-delay: 0s;
-
-        .rss-bottom-btn-text {
-            max-width: 80px;
-            opacity: 1;
-            margin-left: 6px;
-        }
+        right: 6px;
+        --rss-hue: 215;   // blue
     }
 }
 
-// Hide sibling bottom button on hover
-.rss-bottom-bar:has(.tb-settings:hover) .tb-help,
-.rss-bottom-bar:has(.tb-help:hover) .tb-settings {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-}
-
-// Unread badge on subscription list items
+// Unread badge (keep: high-contrast red reads well in both themes)
 .unread-badge {
     position: absolute;
     top: -6px;
@@ -556,42 +270,141 @@ body.b3-theme-dark,
     pointer-events: none;
 }
 
-// Touch devices: disable hover expansions, keep icons only
-@media (hover: none) {
-    .save-to-siyuan-btn,
-    .rss-add-btn-enhanced,
-    .rss-action-btn-enhanced {
-        &:hover {
-            width: auto !important;
-            padding: 0 !important;
-            border-radius: 50% !important;
-            justify-content: center !important;
+// Allow text selection in article content and list
+#rssArticleContent {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+#rssArticleList {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+// Article count bar: hide when empty
+#articleCount:empty {
+    display: none;
+}
+
+// ============================================================
+// Hover — ONLY for hover-capable devices. Only width animates (border-
+// radius fixed → corners kept). Fill goes solid with the SAME hue; glyph
+// and label flip to white. Icon+label stay centered (h + v) inside capsule.
+// ============================================================
+@media (hover: hover) and (pointer: fine) {
+
+    // Save (36 → 110): 14 + 6 + 62 = 82px < 110px — centered.
+    .save-to-siyuan-btn:hover {
+        width: 110px;
+        background-color: hsl(var(--rss-hue), 72%, 52%);
+        color: #ffffff;
+
+        .rss-pill-label {
+            opacity: 1;
+            max-width: 62px;
+            margin-left: 6px;
         }
     }
 
-    .rss-bottom-btn {
-        &:hover {
-            width: 28px !important;
-            border-radius: 14px !important;
-            z-index: 1 !important;
+    // Add (32 → 96): 14 + 6 + 56 = 76px < 96px — centered.
+    .rss-add-btn-enhanced:hover {
+        width: 96px;
+        background-color: hsl(var(--rss-hue), 72%, 52%);
+        color: #ffffff;
+
+        .rss-pill-label {
+            opacity: 1;
+            max-width: 56px;
+            margin-left: 6px;
         }
     }
 
-    // Keep all action buttons visible on touch (no sibling hiding)
+    .rss-add-btn-enhanced:active {
+        transform: translate(2px, 2px);
+    }
+
+    // Subscription actions: expand to FILL the 124px container (100%).
+    .rss-action-btn-enhanced:hover {
+        width: 100%;
+        z-index: 2;
+        transition-delay: 0s;
+        background-color: hsl(var(--rss-hue), 72%, 52%);
+        color: #ffffff;
+
+        .rss-pill-label {
+            opacity: 1;
+            max-width: 56px;
+            margin-left: 6px;
+        }
+    }
+
+    // Article-header mark-read (32 → 96).
+    .mark-read-article-btn:hover {
+        width: 96px;
+        background-color: hsl(var(--rss-hue), 72%, 52%);
+        color: #ffffff;
+
+        .rss-pill-label {
+            opacity: 1;
+            max-width: 56px;
+            margin-left: 6px;
+        }
+    }
+
+    // Hide sibling subscription buttons while one is hovered (one covers all)
     .subscription-actions:has(.mark-read-rss:hover) .refresh-rss,
     .subscription-actions:has(.mark-read-rss:hover) .delete-rss,
     .subscription-actions:has(.refresh-rss:hover) .mark-read-rss,
     .subscription-actions:has(.refresh-rss:hover) .delete-rss,
     .subscription-actions:has(.delete-rss:hover) .mark-read-rss,
     .subscription-actions:has(.delete-rss:hover) .refresh-rss {
-        opacity: 1 !important;
-        pointer-events: auto !important;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
     }
 
-    // Keep bottom buttons visible on touch (no sibling hiding)
+    // Bottom (32 → 68 = calc(100% - 12px)): one covers the other.
+    // 14 + 6 + 30 = 50px < 68px — centered.
+    .rss-bottom-btn:hover {
+        width: calc(100% - 12px);
+        background-color: hsl(var(--rss-hue), 72%, 52%);
+        color: #ffffff;
+        z-index: 2;
+        transition-delay: 0s;
+
+        .rss-pill-label {
+            opacity: 1;
+            max-width: 30px;
+            margin-left: 6px;
+        }
+    }
+
+    // Sibling bottom button stays hidden beneath the expanded one
     .rss-bottom-bar:has(.tb-settings:hover) .tb-help,
     .rss-bottom-bar:has(.tb-help:hover) .tb-settings {
-        opacity: 1 !important;
-        pointer-events: auto !important;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+    }
+}
+
+// ============================================================
+// Touch devices: no hover state; positive declaration only.
+// border-radius resized to stay a perfect circle.
+// ============================================================
+@media (hover: none) {
+    .save-to-siyuan-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+    }
+
+    .rss-add-btn-enhanced,
+    .rss-action-btn-enhanced,
+    .mark-read-article-btn,
+    .rss-bottom-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 20px;
     }
 }

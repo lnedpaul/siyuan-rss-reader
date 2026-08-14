@@ -24,12 +24,21 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Local MCP server config (machine-specific absolute paths)
+.mcp.json
+
+# Reasonix desktop session metadata (recreated by the app at runtime)
+.reasonix/
+
 # Temporary files
 *.tmp
 *.temp
 nul
 
 # Test files
+# NOTE: only the root `test/` dir is ignored; src/**/*.test.ts IS tracked
+# (vitest unit tests are project assets and must be committed).
 test/
-*.test.ts
-*.spec.ts
+
+# Local WorkBuddy workspace memory (personal, not shared)
+.workbuddy/

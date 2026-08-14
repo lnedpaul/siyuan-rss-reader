@@ -14,7 +14,9 @@ export function sanitizeHTML(html: string): string {
     ]);
 
     const allowedAttrs = new Set([
-        'href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel',
+        // NOTE: `id` is intentionally NOT allowed: RSS content could inject
+        // duplicate ids that collide with SiYuan page elements (CSS/DOM hijack).
+        'href', 'src', 'alt', 'title', 'class', 'target', 'rel',
         'width', 'height', 'loading'
     ]);
 

@@ -5,6 +5,110 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.34] - 2026-08-14
+
+### UI 设计改造（像素君设计评审落地）
+
+- **按钮颜色收敛（糖果色 → 语义色）**: 移除 6 色 HSL 自建色板（`--hue-*`/`--btn-*`），订阅操作按钮（标记已读/刷新/删除）改为中性底（`--b3-theme-surface-lighter`），仅删除保留危险红色语义（`--b3-theme-error`）；设置/帮助按钮改透明底、hover 才显底；添加订阅与保存到思源保留主题色（主操作唯一强调）。操作区分靠图标+位置，不再靠颜色
+- **触屏降级重构**: hover 展开动画（圆形→胶囊+文字、`:has()` 兄弟隐藏）全部限定到 `@media (hover: hover) and (pointer: fine)`；`@media (hover: none)` 正向声明触屏最终形态（图标按钮、触控目标加大 40px/30px/32px），删除全部 `!important` 反覆盖补丁
+- **键盘可达性（WCAG 2.1）**: 新增全局 `:focus-visible` 主题色焦点环；订阅项（`.subscription-name`）加 `tabindex="0"` + `role="button"`，文章列表项（`.article-item`）加 `tabindex="0"` + `role="listitem"` + `aria-label`；两处事件委托补 Enter 触发（订阅 Enter 选中、文章 Enter 打开），Space 留给全局内容滚动快捷键
+- **删除 z-index: 9999 hack（5 处）**: 思源 Dialog 原生机制为 `z-index: ${++window.siyuan.zIndex}`（全局递增计数器，新对话框恒在最上），开发者无需手动干预；删除 deleteSubscription/showAddSubscriptionDialog/showNotebookSelectionDialog/showSettingsDialog 的 rAF zIndex 赋值及 showHelpDialog 中混绑的 zIndex（保留其关闭按钮绑定）
+- **SCSS 精简**: 移除 :root 色板变量、dark 模式冗余覆盖块、对话框深色 hack（思源 Dialog 原生支持深色）；保留大红未读角标（两种主题下对比度均成立）
+
+### 试用反馈修订（2026-08-14）
+
+- **按钮视觉语言统一为单一主题色**: 次级操作（标记已读/刷新/删除/设置/帮助）统一为透明底 + 主题色图标，hover 主题色淡底；**删除按钮移除红色**（红色仅保留在删除确认对话框按钮，危险操作确认语义不变）；保存/添加按钮保留主题色实底（主操作唯一强调）+ `--b3-theme-on-primary` 图标，消除"删除红 + 保存蓝"双色打架的凌乱感
+- **图标零位移（胶囊展开重构）**: 所有胶囊按钮从 `justify-content:center`（内容超宽时图标被挤出中心）改为 `justify-content:flex-start` + 固定 `padding-left`（等于圆态居中偏移：36px→11px / 32px→8px / 26px→6px / 28px→1px），展开时图标位置恒定，仅文字淡入；修复设置/帮助按钮 hover 后图标文字位移不居中的问题；共享骨架抽取为 `@mixin rss-pill-btn`
+- **hover 对比度修正**: 保存/添加按钮 hover 时 `color` 从 `on-primary` 切回 `primary`（浅底上的深色文字），避免白字落在浅色淡底上
+
+### 试用反馈修订第二轮（2026-08-14）
+
+- **操作按钮 hover 变形为椭圆**: 共享骨架 `@mixin rss-pill-btn` 的 `border-radius:50%` 在 hover 展开（120px×26px）时残留，`rss-action-btn-enhanced:hover` 未覆盖 → 椭圆；补上 `border-radius:13px`（半高胶囊）
+- **设置/帮助按钮图标文字不居中**: `.rss-bottom-btn` 漏接 `@include rss-pill-btn`，缺 `display:flex/align-items/justify-content` 等基础属性，内部 span 按默认流式排列 → 不居中；补接 mixin
+- **保存/添加按钮图标错位**: 保存按钮 svg 带思源 `.block__logoicon`（内置 `margin-right:4px;padding:4px`，实际占 28px），固定 padding 方案计算错误；改为 `.save-to-siyuan-btn svg` 高特异性选择器清零 `margin/padding` 并锁定 14px
+- **按钮布局回归稳定方案**: 固定 padding 方案（对 margin 敏感）整体替换为 `justify-content:center`（圆态完美居中、无视 margin），hover 展开宽度与文字 `max-width` 按可用空间校准（bottom 按钮 80→32px、add 按钮 80→70px），杜绝内容超宽把居中图标挤出视口
+- **触屏块同步简化**: 移除固定 padding 计算（flex 居中无需 padding），只保留触控目标尺寸
+
+### 试用反馈修订第三轮（2026-08-14）
+
+- **按钮圆形底色丢失**: 上一轮次级按钮改透明底导致默认态圆形不可见；恢复可见圆形——主操作（保存/添加）实底主题色，次级（已读/刷新/删除/设置/帮助/文章标记已读）淡底 `surface-lighter` + 主题色图标
+- **按钮尺寸统一**: 除保存笔记（36px）外全部统一为 32px 圆形；触屏目标统一加大（保存 44px、其余 40px）
+- **统一胶囊结构（零位移）**: 所有按钮 HTML 统一为 `<span class="rss-pill-icon">` + `<span class="rss-pill-label">`；图标容器宽度恒等于圆径且内部图标居中——圆态必然居中，展开时钉在左侧不位移；`.block__logoicon` 的 margin/padding 在容器内被清零
+- **hover 改"划出"而非"拉伸变形"**: 圆形向右侧滑出为胶囊——`width` 动画 + `border-radius` 从 50% 平滑过渡到半高圆角 + 文字淡入，图标固定不动；不再是 `border-radius:50%` 在宽≠高时的椭圆变形
+- **骨架参数化**: 抽 `@mixin rss-pill($size)`（含图标容器、文字容器、过渡动画），5 类按钮复用；HTML 结构与 CSS 一一对应
+
+### 试用反馈修订第四轮（2026-08-14）
+
+- **按钮背景色统一**: 所有按钮（保存/添加/已读/刷新/删除/设置/帮助/文章标记已读）统一为同一色——主题色实底 `--b3-theme-primary` + `--b3-theme-on-primary` 图标，hover 统一变浅底 `--b3-theme-primary-light` + 深主题色图标；彻底移除次级按钮的 `surface-lighter` 淡底分支，消除"两套颜色"的不一致
+- **展开态内容居中**: 胶囊展开后图标+文字整体 flex 居中（上下左右居中）；从"图标容器钉左侧"改回 `justify-content: center`（图标容器不再固定宽度），且各胶囊展开宽度严格大于"图标 14px + 间距 6px + 文字"总宽（保存 110px/添加·操作·标记 96px/底部 68px），杜绝 flex 居中把超宽内容两端裁剪挤出图标
+- 圆态/展开态双态均居中；hover 划出动画保持（width + border-radius 50%→半高 + 文字淡入）
+
+### 试用反馈修订第五轮（2026-08-14，按 uiverse thin-duck-22 参考重做）
+
+- **hover 动画改为标准"划出"机制**: 参照 uiverse.io/vinodjangid07/thin-duck-22 重做。圆态——图标容器 `width:100%` 使图标占满整圆并 flex 居中（彻底解决圆态居中），文字 `position:absolute; right:0; width:0; opacity:0` 隐藏不占位；hover——按钮 `width` 扩大 + `border-radius` 50%→半高，图标区收缩为左侧区域（`width:30~44% + padding-left`），文字从右侧划出（`width:0→X% + opacity:1 + padding-right`），`.block__logoicon` margin/padding 在图标容器内清零。此前的 `max-width` 展开方案废弃
+- **按钮背景色彻底统一**: 所有按钮（保存/添加/已读/刷新/删除/设置/帮助/文章标记已读）同一配色——默认主题色实底 `primary` + `on-primary` 图标，hover 统一变浅底 `primary-light` + 深主题色图标文字
+- **骨架重构**: `@mixin rss-pill($size)` 内嵌 `.rss-pill-icon`（width:100% 圆态居中）与 `.rss-pill-label`（absolute 右划出）两个子结构，5 类按钮复用
+
+### 试用反馈修订第六轮（2026-08-14，按 bobcat/mole 参考重做）
+
+- **椭圆变形根治——border-radius 固定不过渡**: 此前 `border-radius` 从 `50%` 过渡到半高值，50% 在宽≠高时是椭圆（"先变椭圆再填满成胶囊"的根源）；改为 `border-radius` 固定为半高值（`$size/2`）且**不参与过渡**，只动画 `width`——圆态 width==height 读作正圆，hover 只加宽 → 保持 4 个圆角、从中间展开为胶囊（参照 uiverse bobcat `border-radius:50px` 固定方案）
+- **展开态内容居中**: 图标+文字在胶囊中整体 flex 居中（上下左右居中），label `max-width` 按展开宽度校准（14 图标+6 间距+文字 < 胶囊宽），杜绝裁剪/偏移
+- **操作组（标记已读/刷新/删除）展开填满容器**: hover 展开宽度改为 `width:100%`（填满 124px 的 `.subscription-actions` 容器），不再是 96px 半吊子
+- **底部设置/帮助一个划开遮住另一个**: 保留 `:has()` 兄弟隐藏，一个展开时另一个隐藏（覆盖效果）
+- **统一配色保持**: 全部按钮主题色实底 + on-primary 图标，hover 统一 primary-light 淡底
+
+### 试用反馈修订第七轮（2026-08-14，透明彩虹语义色）
+
+- **配色改为透明彩虹语义色板**: 按用户审美转向，7 个按钮各对应一个色相（红橙黄绿青蓝紫）——删除=红(355)、标记已读=橙(28)、刷新=黄(48)、添加=绿(145)、设置=青(190)、帮助=蓝(215)、保存笔记=紫(268)；用 CSS 自定义属性 `--rss-hue` 按按钮注入色相。**静态** = 半透明淡彩底 `hsla(hue,70%,55%,0.16)` + 同色相图标；**悬浮** = 同色相实底 `hsl(hue,72%,52%)` + 白图标文字。透明底在深浅主题下均自然融合
+- **展开态上下居中修正**: `.rss-pill-icon` 补 `height:100%`、`.rss-pill-label` 补 `display:flex; align-items:center; line-height:1`，修复胶囊展开后图标与文字垂直方向不对齐（偏上/偏下）的问题
+- 圆角保持机制不变（border-radius 固定半高不过渡），操作组填满容器、底部遮罩等保持不变
+
+### 收尾 QA 修复（2026-08-14）
+
+- **localStorage 裸 key 前缀化**: `rss_cache`/`rss_device_version` 两个裸 key 与 0.1.14 声称的"存储键命名空间隔离"不一致（可能与其它插件冲突）；改为 `siyuan-rss-reader_rss_cache`/`siyuan-rss-reader_rss_device_version`，读取时自动迁移旧 key（读旧→写新→删旧），uninstall 清理新旧两处
+- **对话框 null guard 补齐**: `showNotebookSelectionDialog`/`showSettingsDialog` 在 `new Dialog()` 后立即访问 `dialog.element` 无空值保护（其余对话框均有）；补 `if (!dialog.element) return/resolve(null)`
+- **Settings 接口缩进修正**: `enableKeyboardShortcuts`/`fontSize` 两字段缩进异常（多 4 空格），格式化对齐
+- 检查确认无遗留：旧按钮类名（rss-action-btn-sign 等）零残留；z-index hack 仅剩注释；8 处按钮 HTML 统一 `rss-pill-icon/label` 结构；键盘可达性（tabindex + Enter 委托）完整；i18n 中英 84 键一致
+
+## [0.1.33] - 2026-08-14
+
+### 兼容性
+
+- **适配思源 v3.8.0**: 经核对官方 v3.8.0 发布说明（2026-08-12），插件所用内核 API（`forwardProxy`、`lsNotebooks`、`createDocWithMd`、`flushTransaction`、`netImg2LocalAssets`）与插件 API（`addTab`/`addTopBar`/`addCommand`/`addIcons`/`onDataChanged`）均无破坏性变更；3.8.0 的数据库 ViewID 重构、`getBlockKramdown` IAL 排序等变更与本插件无关
+- 升级 `siyuan` 类型包至 `^1.2.4`，与 3.8.0 插件 API 类型对齐
+
+### 修复（遗留 bug）
+
+- **保存笔记原文链接协议注入**: `applyTemplate` 中 Markdown 链接仅做 `escapeHtml` 未过滤协议，恶意 RSS 源的 `javascript:`/`data:` 链接会写入笔记文档；先经 `sanitizeUrl` 协议过滤（非法返回 `#` 时整行省略）再转义
+- **笔记本选择器 XSS 残留**: `showNotebookSelectionDialog` 的 `<option value>` 与显示文本未转义，`nb.id`/`nb.name` 含特殊字符可破坏 HTML；补齐 `escapeHtml`
+- **删除订阅确认对话框未转义**: 订阅名/URL 直接注入对话框 HTML；补齐 `escapeHtml`
+- **内置源下拉未转义**: `showAddSubscriptionDialog` 的 featured feeds `<option>` 显示文本未转义；补齐 `escapeHtml`（value 中的 URL 保持原样，避免 `&` 转义破坏选中回填）
+- **文章详情原文链接属性注入**: `selectArticle` 中 `<a href="${sanitizeUrl(article.link)}"` 仅滤协议未转义引号，恶意 link 含 `" onmouseover="...` 可突破属性边界；升级为 `sanitizeUrl` + `escapeHtml` 双保险（0.1.29 声称已处理 `<a href>` 注入点但遗漏此插值处）
+- **文章缩略图属性注入**: `renderArticleList` 中 `<img src>` 仅 `sanitizeUrl`，URL 含引号时可破坏属性边界；升级为 `sanitizeUrl` + `escapeHtml` 双保险
+- **HTML 净化白名单含 `id`**: `sanitize.ts` 白名单允许 `id` 属性，RSS 内容可注入与页面冲突的 id（CSS/DOM 劫持面）；移除 `id`，保留 `class`
+- **手动刷新丢 LRU 缓存**: `refreshSubscription` 未把新文章全文写入 `articleContentCache`，打开文章需回退 localStorage 再解析；与 `fetchAndCacheArticles` 行为对齐
+- **后台轮询无意义版本膨胀**: `checkForUpdates` 每次轮询（即使无新文章）都 `stampSubscription`（CRDT version++）并写盘，跨设备合并时本设备系统性"胜出"且每 30 分钟持续写存储；改为仅当检测到新文章时才 stamp + 写缓存
+- **无限滚动失效（滚动到底不加载）**: 全量重渲染（标记已读/批量已读/布局切换/后台刷新后 `renderArticleList(false)`）把 `displayedArticleCount` 重置为 0 且不补足首屏——当第一页（每页条目数）不足以填满容器时列表无滚动条，scroll 事件永不触发，剩余文章永远加载不出来；全量渲染后自动 `checkAndLoadMore` 补足首屏
+- **无限滚动锁死隐患**: scroll 触发与 `checkAndLoadMore` 的 append 若渲染异常，`isLoadingMore` 永不解锁导致无限滚动永久失效；改为 try-finally 保证解锁
+- **已显示计数越界**: `renderArticleList` 末页不足一页时 `displayedArticleCount` 仍取 `start+perPage` 导致计数超过实际文章数（如 45 条显示 60）；封顶为 `Math.min(end, length)`
+- **布局切换后面板尺寸重置**: 侧边栏宽度/文章列表比例硬编码（20%/35%/40%）且 resizer 拖拽后未持久化，切换布局或重开标签页即恢复默认；`Settings` 新增 `sidebarWidthPct`/`articleListFlexPct`，拖拽结束时写入并保存，`initSidebarUI` 读取持久化值（旧设置自动回退默认）
+- **initSidebarUI 重建未清理滚动状态**: 布局/设置变更重建 DOM 时不清理 `scrollThrottleTimer`，节流窗口内的滚动事件被吞且旧回调可能读已销毁元素；重建时复位 `isLoadingMore`/`scrollThrottleTimer`
+- **测试基建**: 新增 `src/__mocks__/siyuan.ts` + vitest alias（npm 的 siyuan 包仅含类型声明），新增 `src/infinite-scroll.test.ts` 覆盖滚动加载/首屏补足/锁释放 3 个场景（68 个测试全绿）
+
+## [0.1.32] - 2026-08-12
+
+### 兼容性
+
+- **兼容思源 v3.8.0**: 经核对 v3.8.0 无插件/内核 API 破坏性变更，所用内核 API（`forwardProxy`、`lsNotebooks`、`createDocWithMd`、`flushTransaction`、`netImg2LocalAssets`）均仍存在；RFC 5646 语言方案（`zh-CN` / `en`）已合规
+
+### 修复
+
+- **forwardProxy headers 格式**: `/api/network/forwardProxy` 请求的 `headers` 由对象 `{ "User-Agent": ... }` 改为数组 `[{ "User-Agent": ... }]`，与内核解析格式（`arg["headers"].([]any)`）一致，修复降级代理请求 User-Agent 被静默忽略的问题
+
+### 依赖
+
+- 升级 `siyuan` 类型包至 `^1.2.3`，并移至 `devDependencies`（运行时经 webpack `externals` 使用宿主 API，类型包仅供编译期使用）
+
 ## [0.1.31] - 2026-07-18
 
 ### 修复

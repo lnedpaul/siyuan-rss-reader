@@ -104,8 +104,8 @@ interface Settings {
     articlesPerPage: number;
     autoMarkRead: boolean;
     layout: 'horizontal' | 'vertical';
-        enableKeyboardShortcuts: boolean;
-        fontSize: number; // 12-20px
+    enableKeyboardShortcuts: boolean;
+    fontSize: number; // 12-20px
     autoRefreshInterval: number;
     lastUsedNotebookId?: string;
     useTemplate: boolean;
@@ -113,6 +113,10 @@ interface Settings {
     templateShowSiteName: boolean;
     templateShowDateTime: boolean;
     deviceId: string; // Device identifier for CRDT sync
+    // Persisted panel sizes (percentages). Optional for backward compat with
+    // older saved settings that predate resizer persistence.
+    sidebarWidthPct?: number;   // subscription sidebar width (%)
+    articleListFlexPct?: number; // article list flex-basis (%, vertical: width, horizontal: height)
 }
 
 const defaultSettings: Settings = {
@@ -128,6 +132,8 @@ const defaultSettings: Settings = {
     templateShowSiteName: true,
     templateShowDateTime: true,
     deviceId: "",
+    sidebarWidthPct: 20,
+    articleListFlexPct: 35,
 };
 
 const SHORTCUTS = {
@@ -757,6 +763,14 @@ export default class RSSReaderPlugin extends Plugin {
 
                 this.subscriptions = mergedArray;
                 logger.log(`onDataChanged: merged ${incoming.length} incoming with ${this.subscriptions.length} existing`);
+
+                // Reflect merge results (including remote tombstones / new subs) in the UI
+                if (this.container?.isConnected) {
+                    const listEl = this.container.querySelector("#rssList");
+                    if (listEl) {
+                        listEl.innerHTML = this.renderSubscriptionListHTML();
+                    }
+                }
             }
 
             const statusData = await this.loadData(READ_STATUS_NAME);
@@ -817,7 +831,8 @@ export default class RSSReaderPlugin extends Plugin {
         await this.removeData(READ_STATUS_NAME);
         this.removeLocalCache();
         await this.removeData(SETTINGS_NAME);
-        localStorage.removeItem('rss_device_version');
+        localStorage.removeItem(RSSReaderPlugin.DEVICE_VERSION_KEY);
+        localStorage.removeItem(RSSReaderPlugin.LEGACY_DEVICE_VERSION_KEY);
         
         logger.log("RSS Reader plugin data cleaned up successfully");
     }
@@ -849,7 +864,17 @@ export default class RSSReaderPlugin extends Plugin {
         // Initialize device-local version counter (NOT synced via saveData)
         let savedVersion = 0;
         try {
-            savedVersion = parseInt(localStorage.getItem('rss_device_version') || '0', 10);
+            // Prefixed key (legacy bare key migrated on first read)
+            let rawVersion = localStorage.getItem(RSSReaderPlugin.DEVICE_VERSION_KEY);
+            if (rawVersion == null) {
+                const legacy = localStorage.getItem(RSSReaderPlugin.LEGACY_DEVICE_VERSION_KEY);
+                if (legacy != null) {
+                    rawVersion = legacy;
+                    localStorage.setItem(RSSReaderPlugin.DEVICE_VERSION_KEY, legacy);
+                    localStorage.removeItem(RSSReaderPlugin.LEGACY_DEVICE_VERSION_KEY);
+                }
+            }
+            savedVersion = parseInt(rawVersion || '0', 10);
         } catch (e) {
             logger.warn("Failed to read device version from localStorage:", e);
         }
@@ -1042,12 +1067,23 @@ export default class RSSReaderPlugin extends Plugin {
             this.vResizerUpHandler = null;
         }
         // Reset resizing flag
-
-        // Load unread counts BEFORE rendering so badges appear immediately
         this.isResizing = false;
-        
+
+        // Reset scroll/loading state before rebuilding DOM: a stale
+        // scrollThrottleTimer would swallow every subsequent scroll event
+        // (infinite scroll would appear dead after layout/settings change).
+        this.isLoadingMore = false;
+        if (this.scrollThrottleTimer) {
+            clearTimeout(this.scrollThrottleTimer);
+            this.scrollThrottleTimer = null;
+        }
+
         const isH = this.settings.layout === 'vertical';
-        const listFlex = isH ? '0 0 35%' : '0 0 40%';
+        // Use user-adjusted (persisted) panel sizes, falling back to defaults
+        // for settings saved before resizer persistence existed.
+        const sidebarWidth = Math.min(35, Math.max(10, this.settings.sidebarWidthPct ?? 20));
+        const articleFlex = Math.min(80, Math.max(10, this.settings.articleListFlexPct ?? (isH ? 35 : 40)));
+        const listFlex = `0 0 ${articleFlex}%`;
         const listBorder = isH ? 'border-right:1px solid var(--b3-border-color)' : 'border-bottom:1px solid var(--b3-border-color)';
         const listMin = isH ? 'min-width:120px' : 'min-height:80px';
         const resizerStyle = isH ? 'width:4px;cursor:col-resize' : 'height:4px;cursor:row-resize';
@@ -1057,7 +1093,7 @@ export default class RSSReaderPlugin extends Plugin {
             <div class="rss-reader-container" style="width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;position:relative;">
                 <div style="flex:1;display:flex;overflow:hidden;">
                     <!-- Left: subscription sidebar -->
-                    <div id="rssSidebar" class="rss-sidebar" style="width:20%;min-width:min-content;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
+                    <div id="rssSidebar" class="rss-sidebar" style="width:${sidebarWidth}%;min-width:min-content;max-width:35%;border-right:1px solid var(--b3-border-color);display:flex;flex-direction:column;background:var(--b3-theme-surface);flex-shrink:0;">
                         <!-- Subscription list (includes add button) -->
                         <div id="rssList" class="rss-list" style="flex:1;overflow-y:auto;padding:4px;">
                             ${this.renderSubscriptionListHTML()}
@@ -1067,12 +1103,12 @@ export default class RSSReaderPlugin extends Plugin {
                         <!-- Bottom bar: Settings + Help with slide animation -->
                         <div class="rss-bottom-bar">
                             <button id="tbSettings" title="${this.i18n.settings}" class="rss-bottom-btn tb-settings">
-                                <span class="rss-bottom-btn-icon"><svg><use xlink:href="#iconRSSSettings"></use></svg></span>
-                                <span class="rss-bottom-btn-text">${this.i18n.settings}</span>
+                                <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSSettings"></use></svg></span>
+                                <span class="rss-pill-label">${this.i18n.settings}</span>
                             </button>
                             <button id="tbHelp" title="${this.i18n.help}" class="rss-bottom-btn tb-help">
-                                <span class="rss-bottom-btn-icon"><svg><use xlink:href="#iconRSSHelp"></use></svg></span>
-                                <span class="rss-bottom-btn-text">${this.i18n.help}</span>
+                                <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSHelp"></use></svg></span>
+                                <span class="rss-pill-label">${this.i18n.help}</span>
                             </button>
                         </div>
                     </div>
@@ -1121,14 +1157,14 @@ export default class RSSReaderPlugin extends Plugin {
 
     private renderSubscriptionListHTML(): string {
         const parts: string[] = [];
-        
-        if (this.subscriptions.length === 0) {
+
+        // 空状态按"活动订阅"判断：墓碑（deleted）记录保留在数组中用于 CRDT 同步，
+        // 不计入空状态判断，否则删光所有订阅后空提示永远不会显示。
+        if (!this.subscriptions.some(s => !s.deleted)) {
             parts.push(`<div style="padding:8px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
-                    <span class="rss-add-btn-sign">
-                        <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
-                    </span>
-                    <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
+                    <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSAdd"></use></svg></span>
+                    <span class="rss-pill-label">${this.i18n.add || 'Add'}</span>
                 </button>
             </div>`,
             `<div style="padding:16px;color:var(--b3-font-color-quaternary);text-align:center;font-size:12px;">
@@ -1144,7 +1180,7 @@ export default class RSSReaderPlugin extends Plugin {
                     data-index="${index}"
                     style="padding:8px 10px;border-radius:4px;margin-bottom:4px;cursor:pointer;display:flex;align-items:center;gap:8px;">
                     <div style="width:3px;flex-shrink:0;"></div>
-                    <div class="subscription-name" data-index="${index}" style="flex:1;min-width:0;padding:2px 4px;position:relative;">
+                    <div class="subscription-name" data-index="${index}" tabindex="0" role="button" style="flex:1;min-width:0;padding:2px 4px;position:relative;">
                         <div style="font-size:${fs.listItem};font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--b3-font-color);">
                             ${this.escapeHtml(sub.name || sub.url)}
                         </div>
@@ -1152,32 +1188,24 @@ export default class RSSReaderPlugin extends Plugin {
                     </div>
                     <div class="subscription-actions">
                         <button class="mark-read-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.markAllRead}">
-                            <span class="rss-action-btn-sign">
-                                <svg><use xlink:href="#iconRSSCheck"></use></svg>
-                            </span>
-                            <span class="rss-action-btn-text">${this.i18n.markAllRead || 'Mark Read'}</span>
+                            <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSCheck"></use></svg></span>
+                            <span class="rss-pill-label">${this.i18n.markAllRead || 'Mark Read'}</span>
                         </button>
                         <button class="refresh-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.refresh}">
-                            <span class="rss-action-btn-sign">
-                                <svg><use xlink:href="#iconRSSRefresh"></use></svg>
-                            </span>
-                            <span class="rss-action-btn-text">${this.i18n.refresh || 'Refresh'}</span>
+                            <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSRefresh"></use></svg></span>
+                            <span class="rss-pill-label">${this.i18n.refresh || 'Refresh'}</span>
                         </button>
                         <button class="delete-rss rss-action-btn-enhanced" data-index="${index}" title="${this.i18n.delete}">
-                            <span class="rss-action-btn-sign">
-                                <svg><use xlink:href="#iconRSSDelete"></use></svg>
-                            </span>
-                            <span class="rss-action-btn-text">${this.i18n.delete || 'Delete'}</span>
+                            <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSDelete"></use></svg></span>
+                            <span class="rss-pill-label">${this.i18n.delete || 'Delete'}</span>
                         </button>
                     </div>
                 </div>`;
             }).join(""),
             `<div style="padding:8px;display:flex;justify-content:center;">
                 <button id="tbAdd" title="${this.i18n.add}" class="rss-add-btn-enhanced">
-                    <span class="rss-add-btn-sign">
-                        <svg style="width:16px;height:16px;"><use xlink:href="#iconRSSAdd"></use></svg>
-                    </span>
-                    <span class="rss-add-btn-text">${this.i18n.add || 'Add'}</span>
+                    <span class="rss-pill-icon"><svg><use xlink:href="#iconRSSAdd"></use></svg></span>
+                    <span class="rss-pill-label">${this.i18n.add || 'Add'}</span>
                 </button>
             </div>`);
         }
@@ -1244,6 +1272,21 @@ export default class RSSReaderPlugin extends Plugin {
                 this.selectSubscription(index, container);
             }
         }, { signal });
+
+        // Keyboard accessibility: Enter on a focused subscription selects it
+        // (Space intentionally left to the global content-scroll shortcut)
+        container.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") return;
+            const target = e.target as HTMLElement;
+            const rssList = container.querySelector("#rssList");
+            if (!rssList || !rssList.contains(target)) return;
+            const nameArea = target.closest(".subscription-name");
+            if (!nameArea) return;
+            e.preventDefault();
+            const index = parseInt((nameArea as HTMLElement).dataset.index ?? '', 10);
+            if (isNaN(index)) return;
+            this.selectSubscription(index, container);
+        }, { signal });
     }
 
     // ==================== Resizer ====================
@@ -1292,7 +1335,7 @@ export default class RSSReaderPlugin extends Plugin {
                 }
             };
 
-            const onUp = () => {
+            const onUp = async () => {
                 if (!resizing) return;
                 resizing = false;
                 // Delay resetting isResizing so ResizeObserver doesn't fire during drag release
@@ -1300,7 +1343,18 @@ export default class RSSReaderPlugin extends Plugin {
                 hResizer.style.background = "";
                 document.body.style.cursor = "";
                 document.body.style.userSelect = "";
-                this.saveSettings();
+                // Persist the adjusted sidebar width so it survives layout
+                // switches and plugin reloads (previously reset to the default).
+                const currentSidebar = container.querySelector("#rssSidebar") as HTMLElement;
+                if (currentSidebar?.parentElement) {
+                    const pct = Math.round((currentSidebar.offsetWidth / currentSidebar.parentElement.offsetWidth) * 100);
+                    if (pct >= 10 && pct <= 35) {
+                        this.settings.sidebarWidthPct = pct;
+                        await this.saveSettings();
+                        return;
+                    }
+                }
+                await this.saveSettings();
             };
 
             this.resizerMoveHandler = onMove;
@@ -1356,14 +1410,28 @@ export default class RSSReaderPlugin extends Plugin {
                 }
             };
 
-            const onUp = () => {
+            const onUp = async () => {
                 if (!resizing) return;
                 resizing = false;
                 this.safeSetTimeout(() => { this.isResizing = false; }, 300);
                 vResizer.style.background = "";
                 document.body.style.cursor = "";
                 document.body.style.userSelect = "";
-                this.saveSettings();
+                // Persist the adjusted article-list size so it survives layout
+                // switches and plugin reloads.
+                const currentArticleList = container.querySelector("#rssArticleList") as HTMLElement;
+                if (currentArticleList?.parentElement) {
+                    const parent = currentArticleList.parentElement;
+                    const pct = this.settings.layout === 'vertical'
+                        ? Math.round((currentArticleList.offsetWidth / parent.offsetWidth) * 100)
+                        : Math.round((currentArticleList.offsetHeight / parent.offsetHeight) * 100);
+                    if (pct >= 10 && pct <= 80) {
+                        this.settings.articleListFlexPct = pct;
+                        await this.saveSettings();
+                        return;
+                    }
+                }
+                await this.saveSettings();
             };
 
             this.vResizerMoveHandler = onMove;
@@ -1495,7 +1563,7 @@ export default class RSSReaderPlugin extends Plugin {
     private getNextVersion(): number {
         this.deviceVersion++;
         try {
-            localStorage.setItem('rss_device_version', String(this.deviceVersion));
+            localStorage.setItem(RSSReaderPlugin.DEVICE_VERSION_KEY, String(this.deviceVersion));
         } catch (e) {
             logger.warn("Failed to persist device version to localStorage:", e);
         }
@@ -1549,7 +1617,10 @@ export default class RSSReaderPlugin extends Plugin {
 
                 if (sub.deleted) {
                     deletedIds.add(sub.id);
-                    mergedMap.delete(sub.id);
+                    // 保留软删除墓碑（deleted: true）而不是从存储中硬删除：
+                    // 墓碑必须持久化，删除操作才能通过 CRDT 同步到其他设备；
+                    // 否则其他设备的副本会在下次 onDataChanged 合并时被"复活"。
+                    mergedMap.set(sub.id, sub);
                     return;
                 }
 
@@ -1617,7 +1688,7 @@ export default class RSSReaderPlugin extends Plugin {
             const dialog = new Dialog({
                 title: this.i18n.deleteConfirm,
                 content: `<div class="b3-dialog__content" style="padding:16px;">
-                    <div style="color:var(--b3-font-color);font-size:14px;">${sub.name || sub.url}</div>
+                    <div style="color:var(--b3-font-color);font-size:14px;">${this.escapeHtml(sub.name || sub.url)}</div>
                 </div>
                 <div class="b3-dialog__action">
                     <button type="button" class="b3-button b3-button--cancel">${this.i18n.cancel}</button>
@@ -1627,9 +1698,8 @@ export default class RSSReaderPlugin extends Plugin {
                 width: "350px",
                 destroyCallback: () => resolve(false),
             });
-            //Fix z-index to be above sticky header
-            requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
-            
+            // NOTE: no manual z-index — SiYuan's Dialog sets its own via the
+            // global ++window.siyuan.zIndex counter (always on top).
             if (!dialog.element) { resolve(false); return; }
             const cancelBtn = dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement;
             const confirmBtn = dialog.element.querySelector("#delConfirm") as HTMLButtonElement;
@@ -1684,14 +1754,17 @@ export default class RSSReaderPlugin extends Plugin {
         const selectedSubId = this.currentSubscriptionIndex >= 0 && this.currentSubscriptionIndex < this.subscriptions.length
             ? this.subscriptions[this.currentSubscriptionIndex].id
             : null;
+        const deletedId = sub.id;
 
         // Save with soft delete and sync
         await this.saveSubscriptionsWithMerge();
 
-        // Re-locate selection by ID to handle index shifting
+        // Re-locate selection by ID to handle index shifting.
+        // NOTE: soft-deleted tombstones stay in the array for CRDT sync, so findIndex
+        // can still match the deleted sub — only skip it when it is the deleted one.
         if (selectedSubId) {
             const newIndex = this.subscriptions.findIndex(s => s.id === selectedSubId);
-            if (newIndex >= 0) {
+            if (newIndex >= 0 && selectedSubId !== deletedId) {
                 this.currentSubscriptionIndex = newIndex;
             } else {
                 // Current subscription was deleted, reset selection
@@ -1720,7 +1793,7 @@ export default class RSSReaderPlugin extends Plugin {
                     <div style="margin-bottom:8px;font-size:13px;font-weight:500;">${this.i18n.featuredFeeds}</div>
                     <select class="b3-select fn__block" id="featuredFeeds" style="margin-bottom:12px;">
                         <option value="">${this.i18n.selectFeed}</option>
-                        ${FEATURED_FEEDS.map(f => `<option value="${f.name}|${f.url}">${f.name}</option>`).join("")}
+                        ${FEATURED_FEEDS.map(f => `<option value="${this.escapeHtml(f.name)}|${f.url}">${this.escapeHtml(f.name)}</option>`).join("")}
                     </select>
                 </div>
                 <div style="text-align:center;color:var(--b3-font-color-quaternary);margin:12px 0;font-size:12px;">${this.i18n.or}</div>
@@ -1736,16 +1809,6 @@ export default class RSSReaderPlugin extends Plugin {
                 <button type="button" class="b3-button b3-button--text" id="confirmAdd">${this.i18n.confirm}</button>
             </div>`,
             width: "400px",
-        });
-
-        //Fix #4: Ensure dialog is above article content sticky header
-        requestAnimationFrame(() => {
-            const el = dialog.element;
-            if (el) {
-                el.style.zIndex = "9999";
-                const content = el.querySelector(".b3-dialog__content");
-                if (content) (content as HTMLElement).style.position = "relative";
-            }
         });
 
         if (!dialog.element) return;
@@ -1792,8 +1855,10 @@ export default class RSSReaderPlugin extends Plugin {
                 return;
             }
 
-            // Check if subscription already exists (by URL, normalized)
+            // Check if subscription already exists (by URL, normalized).
+            // Skip soft-deleted tombstones (kept for CRDT sync) so a deleted feed can be re-added.
             const existingSub = this.subscriptions.find(sub => {
+                if (sub.deleted) return false;
                 try {
                     return new URL(sub.url).toString() === new URL(url).toString();
                 } catch {
@@ -1882,13 +1947,16 @@ export default class RSSReaderPlugin extends Plugin {
             return `
                 <div class="article-item ${isUnread ? 'is-unread' : ''} ${isSelected ? 'selected' : ''}"
                     data-index="${gi}"
+                    tabindex="0"
+                    role="listitem"
+                    aria-label="${this.escapeHtml(article.title)}"
                     style="padding:12px 14px;border-bottom:1px solid var(--b3-border-color);cursor:pointer;display:flex;align-items:flex-start;gap:10px;">
                     
                     <!-- Unread color bar placeholder - status indicator uses 3px space to ensure layout -->
                     <span style="width:3px;height:100%;min-height:20px;flex-shrink:0;${showUnreadBar ? 'background:var(--b3-theme-primary);' : 'background:transparent;'}border-radius:2px;align-self:stretch;margin-top:auto;margin-bottom:auto;"></span>
                     
                     <!-- Thumbnail image container -->
-                    ${thumbnailUrl ? `<img src="${this.sanitizeUrl(thumbnailUrl)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
+                    ${thumbnailUrl ? `<img src="${this.escapeHtml(this.sanitizeUrl(thumbnailUrl))}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--b3-theme-surface-lighter);" loading="lazy" onerror="this.style.display='none'">` : ''}
                     
                     <!-- Article content area -->
                     <div style="flex:1;min-width:0;">
@@ -1925,7 +1993,11 @@ export default class RSSReaderPlugin extends Plugin {
             </div>`);
         }
 
-        this.displayedArticleCount = end;
+        // Cap at total length: when the last page is short (or empty after
+        // everything is loaded), displayedArticleCount must not exceed
+        // currentArticles.length — otherwise it loses its "displayed count"
+        // semantics and can grow unboundedly.
+        this.displayedArticleCount = Math.min(end, this.currentArticles.length);
         // Always setup events (cloning prevents duplicates)
         this.setupArticleListEvents(container);
         // Update article count display after each render (including append/scroll)
@@ -1933,6 +2005,17 @@ export default class RSSReaderPlugin extends Plugin {
         if (countEl) {
             const unread = this.currentArticles.filter(a => !(this.readStatus[a.id]?.isRead || a.isRead || false)).length;
             countEl.textContent = unread > 0 ? `${unread}/${this.currentArticles.length}` : `${this.currentArticles.length}`;
+        }
+
+        // Critical: after a FULL re-render (append=false), displayedArticleCount
+        // was reset to 0. If page 1 does not fill the container, the list has no
+        // scrollbar, no scroll event can fire, and the rest of the articles can
+        // never be loaded — infinite scroll appears broken. Backfill the first
+        // screen so the list becomes scrollable again. (checkAndLoadMore is
+        // guarded by isLoadingMore, so the duplicate call from selectSubscription
+        // is harmless.)
+        if (!append && hasMore) {
+            this.safeSetTimeout(() => this.checkAndLoadMore(container), 80);
         }
         
         // Performance tracking
@@ -1968,9 +2051,15 @@ export default class RSSReaderPlugin extends Plugin {
                 if (scrollTop + clientHeight >= scrollHeight - 80) {
                     if (this.displayedArticleCount < this.currentArticles.length) {
                         this.isLoadingMore = true;
-                        this.renderArticleList(container, true);
-                        // Unlock after a short delay to prevent rapid-fire
-                        this.safeSetTimeout(() => { this.isLoadingMore = false; }, 500);
+                        try {
+                            this.renderArticleList(container, true);
+                        } catch (e) {
+                            logger.error("scroll append error:", e);
+                        } finally {
+                            // Always unlock — a render exception must not leave
+                            // isLoadingMore stuck at true (infinite scroll deadlock).
+                            this.safeSetTimeout(() => { this.isLoadingMore = false; }, 500);
+                        }
                     }
                 }
             }, 100);
@@ -1991,14 +2080,20 @@ export default class RSSReaderPlugin extends Plugin {
             // If list doesn't fill the container and there are more articles, load more
             if (scrollHeight <= clientHeight + 10 && this.displayedArticleCount < this.currentArticles.length) {
                 this.isLoadingMore = true;
-                this.renderArticleList(container, true);
-                // Fix: Only check once after render, don't recursively call
-                this.safeSetTimeout(() => {
-                this.isLoadingMore = false;
-                if (this.displayedArticleCount < this.currentArticles.length) {
-                    this.checkAndLoadMore(container);
+                try {
+                    this.renderArticleList(container, true);
+                } catch (e) {
+                    logger.error("checkAndLoadMore render error:", e);
+                } finally {
+                    // Always unlock — a render exception must not leave
+                    // isLoadingMore stuck at true (infinite scroll deadlock).
+                    this.safeSetTimeout(() => {
+                        this.isLoadingMore = false;
+                        if (this.displayedArticleCount < this.currentArticles.length) {
+                            this.checkAndLoadMore(container);
+                        }
+                    }, 150);
                 }
-                }, 150);
             }
         });
     }
@@ -2021,12 +2116,25 @@ export default class RSSReaderPlugin extends Plugin {
             const item = (e.target as HTMLElement).closest(".article-item");
             if (!item) return;
             const index = parseInt((item as HTMLElement).dataset.index ?? '', 10);
-            
+
             this.currentArticleIndex = index;
             this.selectArticle(index, container);
-            
+
             // Prevent event bubbling to avoid duplicate triggers
             e.stopPropagation();
+        });
+
+        // Keyboard accessibility: Enter on a focused article item selects it
+        articleList.addEventListener("keydown", (e) => {
+            const ke = e as KeyboardEvent;
+            if (ke.key !== "Enter") return;
+            const item = (e.target as HTMLElement).closest(".article-item");
+            if (!item) return;
+            e.preventDefault();
+            const index = parseInt((item as HTMLElement).dataset.index ?? '', 10);
+            if (isNaN(index)) return;
+            this.currentArticleIndex = index;
+            this.selectArticle(index, container);
         });
 
         // Mark events as bound
@@ -2096,7 +2204,7 @@ export default class RSSReaderPlugin extends Plugin {
                     </h1>
                     <div style="font-size:${fontSize.meta};color:var(--b3-font-color-quaternary);display:flex;gap:10px;align-items:center;">
                         <span>${article.pubDate ? this.formatDate(article.pubDate) : ''}</span>
-                        <a href="${this.sanitizeUrl(article.link)}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
+                        <a href="${this.escapeHtml(this.sanitizeUrl(article.link))}" target="_blank" style="color:var(--b3-theme-primary);text-decoration:none;display:flex;align-items:center;gap:2px;">
                             ${this.i18n.originalLink}
                         </a>
                     </div>
@@ -2104,13 +2212,13 @@ export default class RSSReaderPlugin extends Plugin {
                 <div style="display:flex;gap:6px;flex-shrink:0;">
                     ${!this.settings.autoMarkRead && !article.isRead ? `
                     <button class="mark-read-article-btn" data-article-id="${article.id}" title="${this.i18n.markAllRead || 'Mark Read'}" aria-label="${this.i18n.markAllRead || 'Mark Read'}">
-                        <svg class="block__logoicon"><use xlink:href="#iconRSSCheck"></use></svg>
-                        <span style="font-size:11px;">${this.i18n.markAllRead || 'Mark Read'}</span>
+                        <span class="rss-pill-icon"><svg class="block__logoicon"><use xlink:href="#iconRSSCheck"></use></svg></span>
+                        <span class="rss-pill-label">${this.i18n.markAllRead || 'Mark Read'}</span>
                     </button>
                     ` : ''}
                     <button class="save-to-siyuan-btn" data-article-id="${article.id}" title="${this.i18n.saveNote}" aria-label="${this.i18n.saveNote}">
-                        <svg class="block__logoicon"><use xlink:href="#iconRSSSave"></use></svg>
-                        <span class="save-to-siyuan-btn-text">${this.i18n.saveNote || 'Save Note'}</span>
+                        <span class="rss-pill-icon"><svg class="block__logoicon"><use xlink:href="#iconRSSSave"></use></svg></span>
+                        <span class="rss-pill-label">${this.i18n.saveNote || 'Save Note'}</span>
                     </button>
                 </div>
             </div>
@@ -2192,7 +2300,7 @@ export default class RSSReaderPlugin extends Plugin {
                     url: url,
                     method: "GET",
                     timeout: FORWARD_PROXY_TIMEOUT,
-                    headers: { "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }
+                    headers: [{ "User-Agent": "Mozilla/5.0 (compatible; SiYuan RSS Reader 2.1)" }]
                 });
                 if (response.code !== 0) {
                     throw new Error(`API error: ${response.msg || 'unknown'}`);
@@ -2428,11 +2536,24 @@ export default class RSSReaderPlugin extends Plugin {
 
     // ==================== Local Storage (non-synced cache) ====================
 
-    private static readonly LOCAL_CACHE_KEY = 'rss_cache';
+    // Prefixed keys for namespace isolation (legacy bare keys migrated on read)
+    private static readonly LOCAL_CACHE_KEY = 'siyuan-rss-reader_rss_cache';
+    private static readonly LEGACY_LOCAL_CACHE_KEY = 'rss_cache';
+    private static readonly DEVICE_VERSION_KEY = 'siyuan-rss-reader_rss_device_version';
+    private static readonly LEGACY_DEVICE_VERSION_KEY = 'rss_device_version';
 
     private getLocalCache(): CachedArticles {
         try {
-            const raw = localStorage.getItem(RSSReaderPlugin.LOCAL_CACHE_KEY);
+            let raw = localStorage.getItem(RSSReaderPlugin.LOCAL_CACHE_KEY);
+            // Migrate legacy unprefixed key (written by versions < 0.1.35)
+            if (raw == null) {
+                const legacy = localStorage.getItem(RSSReaderPlugin.LEGACY_LOCAL_CACHE_KEY);
+                if (legacy != null) {
+                    raw = legacy;
+                    localStorage.setItem(RSSReaderPlugin.LOCAL_CACHE_KEY, legacy);
+                    localStorage.removeItem(RSSReaderPlugin.LEGACY_LOCAL_CACHE_KEY);
+                }
+            }
             return raw ? JSON.parse(raw) : {};
         } catch {
             return {};
@@ -2464,6 +2585,7 @@ export default class RSSReaderPlugin extends Plugin {
     private removeLocalCache(): void {
         try {
             localStorage.removeItem(RSSReaderPlugin.LOCAL_CACHE_KEY);
+            localStorage.removeItem(RSSReaderPlugin.LEGACY_LOCAL_CACHE_KEY);
         } catch {}
     }
 
@@ -2928,6 +3050,8 @@ export default class RSSReaderPlugin extends Plugin {
             // Convert new articles
             const newArticles = feed.items.map(item => {
                 const articleId = this.generateArticleId(item.link, item.title, item.pubDate);
+                // Keep full content in the LRU cache so article detail can render instantly
+                this.setArticleContent(articleId, item.content || item.description || '');
                 return {
                     ...item,
                     id: articleId,
@@ -3025,8 +3149,9 @@ export default class RSSReaderPlugin extends Plugin {
             if (article.pubDate) {
                 metaLines.push(`> ${this.i18n.publishedAt} ${new Date(article.pubDate).toLocaleString()}`);
             }
-            if (article.link) {
-                metaLines.push(`> [Original link](${this.escapeHtml(article.link)})`);
+            const safeLink = article.link ? this.sanitizeUrl(article.link) : '';
+            if (safeLink && safeLink !== '#') {
+                metaLines.push(`> [Original link](${this.escapeHtml(safeLink)})`);
             }
             return [
                 `# ${fileName}`,
@@ -3062,7 +3187,10 @@ export default class RSSReaderPlugin extends Plugin {
         }
         
         if (showLink && article.link) {
-            lines.push(`> [${this.i18n.originalLink}](${this.escapeHtml(article.link)})`);
+            const safeLink = this.sanitizeUrl(article.link);
+            if (safeLink && safeLink !== '#') {
+                lines.push(`> [${this.i18n.originalLink}](${this.escapeHtml(safeLink)})`);
+            }
         }
         
         // Bottom separator
@@ -3187,6 +3315,8 @@ export default class RSSReaderPlugin extends Plugin {
 
         const subs = [...this.subscriptions];
         for (const sub of subs) {
+            // Skip soft-deleted tombstones (kept for CRDT sync) — never fetch deleted feeds
+            if (sub.deleted) continue;
             try {
                 const feed = await this.fetchAndParseRSS(sub.url);
                 if (!feed.items?.length) continue;
@@ -3209,10 +3339,14 @@ export default class RSSReaderPlugin extends Plugin {
                         !(this.readStatus[a.id]?.isRead || a.isRead)
                     ).length;
                     this.unreadCounts.set(sub.id, unread);
-                }
 
-                sub.lastFetchTime = Date.now();
-                this.stampSubscription(sub);
+                    // Only stamp/version when content actually changed.
+                    // Background polls with no new articles must NOT bump the CRDT
+                    // version: doing so makes this device systematically "win" merges
+                    // against other devices and causes needless storage writes.
+                    sub.lastFetchTime = Date.now();
+                    this.stampSubscription(sub);
+                }
             } catch (e) {
                 logger.error("[Background Check] Failed:", e);
             }
@@ -3262,6 +3396,8 @@ export default class RSSReaderPlugin extends Plugin {
         
         const subs = [...this.subscriptions];
         for (const sub of subs) {
+            // Skip soft-deleted tombstones (kept for CRDT sync) — never fetch deleted feeds
+            if (sub.deleted) continue;
             try {
                 const feed = await this.fetchWithRetry(sub, 3);
                 if (gen !== this.refreshGeneration) return;
@@ -3333,7 +3469,7 @@ export default class RSSReaderPlugin extends Plugin {
                     <div style="display:flex;align-items:center;gap:12px;">
                         <select class="b3-select fn__block" id="notebookSelect" style="font-size:14px;flex:1;">
                             ${notebooks.map((nb) => 
-                                `<option value="${nb.id}" ${nb.id === this.settings.lastUsedNotebookId ? 'selected' : ''}>${nb.name}</option>`
+                                `<option value="${this.escapeHtml(nb.id)}" ${nb.id === this.settings.lastUsedNotebookId ? 'selected' : ''}>${this.escapeHtml(nb.name)}</option>`
                             ).join('')}
                         </select>
                         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap;">
@@ -3373,7 +3509,7 @@ export default class RSSReaderPlugin extends Plugin {
                 </div>`,
                 width: "500px",
             });
-            requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
+            if (!dialog.element) { resolve(null); return; }
 
             // Toggle template options section
             const useTemplateCheckbox = dialog.element.querySelector("#useTemplate") as HTMLInputElement;
@@ -3459,18 +3595,13 @@ export default class RSSReaderPlugin extends Plugin {
             throw err;
         }
 
-        // Set z-index and add close button handler
-        requestAnimationFrame(() => {
-            if (dialog.element) {
-                dialog.element.style.zIndex = "9999";
-                const closeBtn = dialog.element.querySelector('#helpDialogClose');
-                if (closeBtn) {
-                    closeBtn.addEventListener('click', () => {
-                        dialog.destroy();
-                    }, { once: true });
-                }
-            }
-        });
+        // Bind close button handler (no manual z-index — SiYuan Dialog handles it)
+        const helpCloseBtn = dialog.element?.querySelector('#helpDialogClose');
+        if (helpCloseBtn) {
+            helpCloseBtn.addEventListener('click', () => {
+                dialog.destroy();
+            }, { once: true });
+        }
     }
 
     private showSettingsDialog(container: HTMLElement) {
@@ -3521,8 +3652,7 @@ export default class RSSReaderPlugin extends Plugin {
             </div>`,
             width: "400px",
         });
-        //Fix z-index to be above sticky header
-        requestAnimationFrame(() => { if (dialog.element) dialog.element.style.zIndex = "9999"; });
+        if (!dialog.element) return;
 
         // Live preview: update font size label as slider moves
         const fontSlider = dialog.element.querySelector("#fontSize") as HTMLInputElement;
