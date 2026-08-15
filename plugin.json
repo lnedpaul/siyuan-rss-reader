@@ -4,7 +4,6 @@
   "url": "https://github.com/lnedpaul/siyuan-rss-reader",
   "version": "0.1.34",
   "minAppVersion": "3.7.0",
-  "icon": "icon.png",
   "backends": ["all"],
   "frontends": ["all"],
   "disabledInPublish": true,
