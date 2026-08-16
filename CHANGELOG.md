@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.35] - 2026-08-16
+
+### 集市检查修复
+
+- **移除 `plugin.json` 中的 `icon` 字段**: 官方集市索引检查（[siyuan-note/bazaar#2108](https://github.com/siyuan-note/bazaar/issues/2108)）要求删除 `plugin.json` 中的非预期字段 `icon`，否则索引无法更新。已删除该字段并重新发布。
+
 ## [0.1.34] - 2026-08-14
 
 ### UI 设计改造（像素君设计评审落地）
